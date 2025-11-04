@@ -2,8 +2,8 @@
 This project aims to increase our understanding of genomic mechanisms that lead to the evolution of complex traits in Cnidaria. 
 
 ### Data: 
-- Proteomes of 72 cnidarians, 3 ctenophores, 6 sponges, Trichoplax, and 15 bilaterians.
-- Single cell RNA sequencing data from Hydra vulgaris, Clytia hemisphaerica, Turritopsis rubra, Aurelia coerulea Xenia sp., Nematostella vectensis, Acropora millepora, and stylophora pistillata
+- Proteomes of 72 cnidarians, 3 ctenophores, 6 sponges, Trichoplax, and 15 bilaterians
+- Single cell RNA sequencing data from _Hydra vulgaris_, _Clytia hemisphaerica_, _Turritopsis rubra_, _Aurelia coerulea_, _Xenia sp._, _Nematostella vectensis_, _Acropora millepora_, and _stylophora pistillata_
 
 # Objectives: 
 1. Determine orthogroup gains and losses within Cnidaria and summarize the overall functions that were gained and lost at focal nodes.
