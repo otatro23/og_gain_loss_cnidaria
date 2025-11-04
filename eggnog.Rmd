@@ -1,0 +1,1839 @@
+---
+title: "Mapping OG functions from eggnog back to OGs gained and lost"
+author: "Olivia Tatro"
+date: "6.17.25"
+output: html_document
+---
+
+We have orthogroup functions from eggnog and a table with gains and losses by node from the orthodollo script. This script will be used to match those up and create figures to try to deduce the functions gained (and loss) at nodes in the cnidarian tree. 
+
+```{r import, message=FALSE}
+
+library(this.path)
+setwd(this.dir())
+
+library(tidyverse)
+library(GO.db)
+library(ape)
+library(cowplot)
+library(gghighlight)
+library(colorspace)
+library(ggtree)
+library(ggforce)
+
+if(file.exists("eggnog_annotations.Rdata")) {
+  load("eggnog_annotations.Rdata")
+} else {
+  eggnog <- read.table("eggnog.euk.keep.tsv", sep = "\t", header = FALSE, quote = "", fill = TRUE)
+  colnames(eggnog) <- c("query", "evalue", "score", "eggNOG_OGs", "COG_category", "Description", "GOs", "KEGG_Pathway", "KEGG_Module")
+  save(eggnog, file = "eggnog_annotations.Rdata")
+}
+
+if(!file.exists(file.path("/Users/oliviatatro/Downloads/surf/eggnog", "OG_COG.tsv"))) {
+  cog <- eggnog
+  cog$query <- sub(".*(OG[0-9]{7}).*", "\\1", cog$query)
+  cog <- cog %>% dplyr::select(c(query, COG_category)) %>% filter(COG_category != "-")
+  cog <- cog %>% separate_rows(COG_category, sep = "") %>% filter(COG_category != "")
+  write.table(cog, file = file.path("/Users/oliviatatro/Downloads/surf/eggnog", "OG_COG.tsv"), quote = FALSE, row.names = FALSE)
+} 
+
+load("../orthodollo/loss_gain_pres_abs_H1.Rds")
+gl <- lossgain.table
+rm(lossgain.table)
+
+load("../orthodollo/tree.Rds")
+tree <- tr1
+rm(tr1)
+
+focal_nodes <- data.frame(
+  node_name = c("anth", "anth2", "endomed", "med", "endo", "myx", "hyd", "acr", "oct", "cer", "hex", "scler", "scyph", "siph", "cnid"),
+  node_name_full = c("Anthozoa", "Anthozoa2", "Endocnidozoa_Medusozoa", "Medusozoa", "Endocnidozoa", "Myxozoa", "Hydrozoa", "Acraspeda", "Octocorallia", "Ceriantheria", "Hexacorallia", "Scleractinia", "Scyphozoa", "Siphonophora", "Cnidaria"),
+  GO_df = c("anth_GO", "anth2_GO", "endomed_GO", "med_GO", "endo_GO", "myx_GO", "hyd_GO", "acr_GO", "oct_GO", "cer_GO", "hex_GO", "scler_GO", "scyph_GO", "siph_GO", "cnid_GO"),
+  node_number = c(132, 133, 103, 104, 129, 130, 105, 116, 163, 159, 134, 137, 120, 108, 102)
+  )
+
+```
+
+Notes on the eggnog columns:
+  eggNOG_OGs: orthogroups assigned by eggnog
+  COG_category: broad category of OGs assigned by eggnog
+  GOs: 
+  KEGG_Pathway
+  KEGG_Module
+
+```{r setup}
+#flips df so that OGs are row names and makes column names node numbers
+gl <- as.data.frame(t(gl))
+colnames(gl) <- as.character(1:ncol(gl))
+gl$og <- rownames(gl)
+  
+eggnog_all <- eggnog
+eggnog <- filter(eggnog_all, evalue <= 1*10^(-50))
+
+if (file.exists("eggnog_categories.Rdata")){
+  load("eggnog_categories.Rdata") 
+} else {
+  
+  # exract the OG from orthofinder and convert the columns to vectors
+  eggnog$query <- sub(".*(OG[0-9]{7}).*", "\\1", eggnog$query)
+  eggnog$eggNOG_OGs <- strsplit(as.character(eggnog$eggNOG_OGs), ",")
+  eggnog$COG_category <- strsplit(as.character(eggnog$COG_category), "")
+  eggnog$GOs <- strsplit(as.character(eggnog$GOs), ",")
+  eggnog$KEGG_Pathway <- strsplit(as.character(eggnog$KEGG_Pathway), ",")
+  eggnog$KEGG_Module <- strsplit(as.character(eggnog$KEGG_Module), ",")
+  #eggnog_long <- separate_rows(eggnog, COG_category, sep = ",")
+  #eggnog_long <- filter(eggnog_long, COG_category != "") %>% 
+    #dplyr::select(c(query, GOs, COG_category))
+  
+  # initialize dataframes for each functional category
+  eggnog_ogs <- data.frame(node = character(), g_eggnog_ogs = vector(), l_eggnog_ogs = vector())
+  COGs <- data.frame(node = character(), g_COGs = vector(), l_COGs = vector())
+  GOs <- data.frame(node = character(), g_GOs = vector(), l_GOs = vector())
+  KEGG_Pathways <- data.frame(node = character(), g_KEGG_Pathways = vector(), l_KEGG_Pathways = vector())
+  KEGG_Modules <- data.frame(node = character(), g_KEGG_Modules = vector(), l_KEGG_Modules = vector())
+  
+  # initialize a gain and loss dataframe to hold COGs and GOs matched to eachother
+  #cog_go_gained <- data.frame(OG = character(), COG = character(), GO = character(), node = numeric())
+  #cog_go_lost <- data.frame(OG = character(), COG = character(), GO = character(), node = numeric())
+  
+  #for (i in 1:151) {
+    #gained <- gl[gl[[i]] == "g", i, drop = FALSE] # finds OGs that were gained in node i
+    #gained$og <- rownames(gained) 
+    #lost <- gl[gl[[i]] == "l", i, drop = FALSE] # finds OGs that were lost in node i
+    #lost$og <- rownames(lost) 
+    
+    #gain <- merge(gained, eggnog_long, by.x = "og", by.y = "query") %>% filter(COG_category != "-" & GOs != "-")
+    #gain <- unnest(gain, GOs)
+      
+    #loss <- merge(lost, eggnog_long, by.x = "og", by.y = "query") %>% filter(COG_category != "-" & GOs != "-")
+    
+    
+  #}
+
+  # iterates through each node and adds the functional information categories to their dataframes
+  for (i in 1:193){
+    gained <- gl[gl[[i]] == "g", i, drop = FALSE] # finds OGs that were gained in node i
+    gained$og <- rownames(gained) 
+    lost <- gl[gl[[i]] == "l", i, drop = FALSE] # finds OGs that were lost in node i
+    lost$og <- rownames(lost) 
+    
+    g_merged <- merge(gained, eggnog, by.x = "og", by.y = "query") # merge the gained OGs with the eggnog output to get functional information for each OG
+    l_merged <- merge(lost, eggnog, by.x = "og", by.y = "query") # merge the lost OGs with the eggnog output to get functional information for each OG
+    
+    
+    g_eggnog_og_list <- unlist(g_merged$eggNOG_OGs, recursive = TRUE, use.names = FALSE) # makes a list of all of the eggnog ogs gained
+    l_eggnog_og_list <- unlist(l_merged$eggNOG_OGs, recursive = TRUE, use.names = FALSE) # makes a list of all of the eggnog ogs lost
+    eggnog_ogs <- rbind(eggnog_ogs, data.frame(node = i, g_eggnog_ogs = I(list(g_eggnog_og_list)), l_eggnog_ogs = I(list(l_eggnog_og_list)))) # add a row to the eggnog_og dataframe for with node i and the eggnog og list
+    
+    g_COG_list <- unlist(g_merged$COG_category, recursive = TRUE, use.names = FALSE) # makes a list of all of the COG categories'
+    l_COG_list <- unlist(l_merged$COG_category, recursive = TRUE, use.names = FALSE) # makes a list of all of the COG categories
+    g_COG_list <- g_COG_list[g_COG_list != "-"]
+    l_COG_list <- l_COG_list[l_COG_list != "-"]
+    COGs <- rbind(COGs, data.frame(node = i, g_COGs = I(list(g_COG_list)), l_COGs = I(list(l_COG_list)))) # add a row to the COGs dataframe for with node i and the COG list
+    
+    g_GO_list <- unlist(g_merged$GOs, recursive = TRUE, use.names = FALSE) # makes a list of all fo the GOs
+    g_GO_list <- g_GO_list[g_GO_list != "-"]
+    l_GO_list <- unlist(l_merged$GOs, recursive = TRUE, use.names = FALSE) # makes a list of all fo the GOs
+    l_GO_list <- l_GO_list[l_GO_list != "-"]
+    GOs <- rbind(GOs, data.frame(node = i, g_GOs = I(list(g_GO_list)), l_GOs = I(list(l_GO_list)))) # add a row to the GOs dataframe for with node i and the GO term list
+    
+    g_KEGG_Pathway_list <- unlist(g_merged$KEGG_Pathway, recursive = TRUE, use.names = FALSE) # makes a list of all of the KEGG_Pathway
+    l_KEGG_Pathway_list <- unlist(l_merged$KEGG_Pathway, recursive = TRUE, use.names = FALSE) # makes a list of all of the KEGG_Pathway
+    g_KEGG_Pathway_list <- g_KEGG_Pathway_list[g_KEGG_Pathway_list != "-"]
+    l_KEGG_Pathway_list <- l_KEGG_Pathway_list[l_KEGG_Pathway_list != "-"]
+    KEGG_Pathways <- rbind(KEGG_Pathways, data.frame(node = i, g_KEGG_Pathways = I(list(g_KEGG_Pathway_list)), l_KEGG_Pathways = I(list(l_KEGG_Pathway_list)))) # add a row to the KEGG_Pathways dataframe for with node i and the KEGG_Pathway list
+    
+    g_KEGG_Module_list <- unlist(g_merged$KEGG_Module, recursive = TRUE, use.names = FALSE) # makes a list of all of the KEGG_Modules
+    l_KEGG_Module_list <- unlist(l_merged$KEGG_Module, recursive = TRUE, use.names = FALSE) # makes a list of all of the KEGG_Modules
+    g_KEGG_Module_list <- g_KEGG_Module_list[g_KEGG_Module_list != "-"]
+    l_KEGG_Module_list <- l_KEGG_Module_list[l_KEGG_Module_list != "-"]
+    KEGG_Modules <- rbind(KEGG_Modules, data.frame(node = i, g_KEGG_Module_list = I(list(g_KEGG_Module_list)), l_KEGG_Module_list = I(list(l_KEGG_Module_list)))) # add a row to the KEGG_Modules dataframe for with node i and the KEGG_Module list
+  }
+  
+  save(eggnog_ogs, GOs, KEGG_Modules, KEGG_Pathways, COGs, file="eggnog_categories.Rdata")
+
+}
+
+
+```
+
+
+Fischers exact tests
+Goal: see if a given node is enriched for a given COG compared to other nodes
+  - eventually make 2 for loops to test each node for each COG category
+  - make a way to exclude the "S" (unknown function) category
+
+input to fishertest(matrix(c(a,c,b,d), nrow = 2))
+  COG=
+  NODE=
+  a = number of COG in NODE
+  b = number of other COGs in NODE
+  c = number of COG in other nodes
+  d = number of other COGs in other nodes 
+```{r fishersexact_gain, eval=FALSE}
+
+if(file.exists("fisher_enrichment.Rdata")){
+  load("fisher_enrichment.Rdata")
+} else {
+  
+# GAIN --------
+# This is a dataframe that will have a pvalue for the fishers exact test. 
+  # rows = nodes
+  # cols = COG categories
+fisher_gain_pval <- data.frame(matrix(NA, nrow = 149, ncol = 25))
+colnames(fisher_gain_pval) <- c("A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "Y", "Z")
+
+# list of all COGs gained at all nodes (just appending everything from COGs$2)
+BG <- unlist(COGs[[2]])
+
+tests <- 0 
+
+for(col in 1:25) {
+  
+  #convert column number from for loop to the corresponding COG category
+  COG <- colnames(fisher_gain_pval)[col]
+  
+  c <- sum(BG == COG)      #number of COG in BG 
+  d <- length(BG) - c      #number of other COGs in BG
+  
+  #iterate through the nodes 
+  for(NODE in 1:149) {
+    
+    a <- sum(COGs[[NODE,2]] == COG)      #number of COG in NODE
+    b <- length(COGs[[NODE,2]]) - a      #number of other COGs in NODE
+    
+    if(length(COGs[[NODE,2]]) != 0 && a != 0) { #if length(COGs at NODE) is not empty and there is at least one COG
+      fisher_test <- fisher.test(matrix(c(a,c,b,d), nrow = 2)) # fisher test notes above code block
+      fisher_gain_pval[NODE, COG] <- fisher_test$p.value
+      tests <- tests + 1
+      
+    }
+  }
+}
+
+for (row in 1:149) {
+  for (col in 1:25) {
+    fisher_gain_pval[row,col] <- fisher_gain_pval[row,col] * tests
+  }
+}
+
+
+
+# LOSS --------
+# This is a dataframe that will have a pvalue for the fishers exact test. 
+  # rows = nodes
+  # cols = COG categories
+fisher_loss_pval <- data.frame(matrix(NA, nrow = 149, ncol = 25))
+colnames(fisher_loss_pval) <- c("A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "Y", "Z")
+
+# list of all COGs lost at all nodes (just appending everything from COGs$3)
+BG <- unlist(COGs[[3]])
+
+tests <- 0 
+
+for(col in 1:25) {
+  
+  #convert column number from for loop to the corresponding COG category
+  COG <- colnames(fisher_loss_pval)[col]
+  
+  c <- sum(BG == COG)      #number of COG in BG 
+  d <- length(BG) - c      #number of other COGs in BG
+  
+  #iterate through the nodes 
+  for(NODE in 1:149) {
+    
+    a <- sum(COGs[[NODE,3]] == COG)      #number of COG in NODE
+    b <- length(COGs[[NODE,3]]) - a      #number of other COGs in NODE
+    
+    if(length(COGs[[NODE,3]]) != 0 && a != 0) { #if length(COGs at NODE) is not empty and there is at least one COG
+      fisher_test <- fisher.test(matrix(c(a,c,b,d), nrow = 2)) # fisher test notes above code block
+      fisher_loss_pval[NODE, COG] <- fisher_test$p.value
+      tests <- tests + 1
+      
+    }
+  }
+}
+
+for (row in 1:149) {
+  for (col in 1:25) {
+    fisher_loss_pval[row,col] <- fisher_loss_pval[row,col] * tests
+  }
+}
+
+save(fisher_loss_pval, fisher_gain_pval, file="fisher_enrichment.Rdata")
+
+}
+
+```
+
+
+make a barplot with how many OGs (583795), centroids (2165278), eggnog annotations (681442), eukaryotic eggnog annotations (656766), eggnog annotations with GO terms 
+```{r summary_fig, eval=FALSE}
+go_count <- nrow(filter(eggnog, GOs != "-")) # can add go_count to the summary df
+summary <- data.frame(category = c("OGs", "Centroids", "EggNOG hits", "EggNOG Eukaryotic hits", "DeepFRI BP hits", "DeepFRI CC hits", "DeepFRI MF hits"), count = c(480973, 2151341, 881917, 868739, 2150871, 2090409, 1932231), stringsAsFactors = FALSE)
+summary$category <- factor(summary$category, levels = summary$category)
+
+pdf("../figures/summary.pdf", width = 8, height = 6)
+#summary_plot <- 
+  ggplot(summary, aes(x = category, y = count)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme_bw() +
+  labs(x = NULL, y = NULL) +
+  theme(axis.text.x = element_text(angle = 20, hjust = 1)) 
+dev.off()
+
+tree_plot <- ggtree(tree, branch.length = "none") + 
+  geom_tiplab(size = 2.75, align = TRUE) #+
+  scale_y_reverse(limits = c(max(tree_data$y) + 0.5, min(tree_data$y) - 0.5), expand = c(0, 0)) +# the tree was upside down without this # the limits shenanigans are to make sure nothing gets cut off, just to add a buffer
+  theme(plot.margin = margin(t = 5, r = 10, b = 5, l = 5)) +
+  coord_cartesian(clip = "off")
+
+tree_data <- tree_plot$data
+
+ggtree(tree) + 
+  geom_tiplab(size = 2.5) +
+  scale_y_reverse(limits = c(max(tree_data$y) + 0.5, min(tree_data$y) - 0.5), expand = c(0, 0)) +# the tree was upside down without this # the limits shenanigans are to make sure nothing gets cut off, just to add a buffer
+  theme(plot.margin = margin(t = 2, r = 25, b = 2, l = 2)) +
+  coord_cartesian(clip = "off")
+
+ggsave("../figures/simple_tree_plot.png", width = 8, height = 5)
+
+```
+
+
+# ------------------------- GOs -------------------------
+
+DATA = df with a row per category and gain/loss/prop counts
+FILTER = number; either losses or gains must be above it
+
+```{r GO_plot_functions, eval=FALSE}
+
+GO_sand_plot <- function(DATA, TITLE = NULL) {
+  data <- DATA %>% mutate(
+    gain_col = ifelse(padj_gain < 0.01, "sig_gain", "notsig"), 
+    loss_col = ifelse(padj_loss < 0.01, "sig_loss", "notsig")
+  ) %>% 
+    filter((padj_gain < 0.01 | padj_loss < 0.01)) %>% 
+    slice_min(order_by = -sum, n = 100)
+  count <- 
+    ggplot(data, aes(y = reorder(GO_term, -sum), x = sum)) + #aes(y = reorder(GO_term, -sum), x = sum)
+      geom_col(aes(x = gained, fill = gain_col)) +    
+      geom_col(aes(x = -lost, fill = loss_col)) +       
+      scale_fill_manual(values = c("sig_gain" = "seagreen", "sig_loss" = "maroon", "notsig" = "grey70")) +
+      labs(x = "Count", y = "GO term", title = TITLE) +
+      theme_minimal() +
+      theme(axis.text.y = element_text(size = 4)) +
+      theme(legend.position = "none") +
+      scale_x_continuous(labels = abs) 
+  
+  prop <- 
+    ggplot(data, aes(y = reorder(GO_term, -sum), x = sum)) + #aes(y = reorder(GO_term, -sum), x = sum)
+      geom_col(aes(x = prop_gained, fill = gain_col)) +    
+      geom_col(aes(x = -prop_lost, fill = loss_col)) +       
+      scale_fill_manual(values = c("sig_gain" = "seagreen", "sig_loss" = "maroon", "notsig" = "grey70")) +
+      labs(x = "Proportion of all gains/losses", y = "GO term", title = "") +
+      theme_minimal() +
+      theme(axis.text.y = element_blank()) +
+      theme(legend.position = "none") +
+      scale_x_continuous(labels = abs)
+  
+  diff <- 
+    ggplot(data, aes(y = reorder(GO_term, -sum), x = sum)) + #aes(y = reorder(GO_term, -sum), x = sum)
+      geom_col(aes(x = diff), fill = "steelblue") +    
+      geom_col(aes(x = -prop_lost, fill = loss_col)) +
+      labs(x = "gains - losses", y = "GO term", title = "") +
+      theme_minimal() +
+      theme(axis.text.y = element_blank()) +
+      theme(legend.position = "none") +
+      scale_x_continuous(labels = abs)
+  
+  plot <- plot_grid(count, prop, diff, nrow = 1)
+  return(plot)
+  
+}
+
+```
+
+RUN ON PREMISE
+```{r GO_setup}
+
+GO_setup <- function(NODE, DATA = GOs) {
+  
+  gains <- DATA$g_GOs[[NODE]]
+  losses <- DATA$l_GOs[[NODE]]
+  
+  # take a row of the GOs dataframe and make count tables with each GO term and how many are in gains and losses (may need to do this separately and then cbind)
+  if (all(is.na(gains))) {
+    g_counts <- data.frame(GO_term = character(), gained = numeric())
+  } else {
+    g_counts <- as.data.frame(table(gains))
+    colnames(g_counts) <- c("GO_term", "gained")
+  }
+
+  if (all(is.na(losses))) {
+    l_counts <- data.frame(GO_term = character(), lost = numeric())
+  } else {
+    l_counts <- as.data.frame(table(losses))
+    colnames(l_counts) <- c("GO_term", "lost")
+  }
+  #g_counts <- as.data.frame(table(DATA[NODE,2]))
+  #colnames(g_counts) <- c("GO_term", "gained")
+  #l_counts <- as.data.frame(table(DATA[NODE,3]))
+  #colnames(l_counts) <- c("GO_term", "lost")
+  
+  GO_counts <- merge(g_counts, l_counts, by = "GO_term", all = TRUE)
+  GO_counts$GO_term <- factor(GO_counts$GO_term, levels = GO_counts$GO_term)
+  GO_counts$gained <- ifelse(is.na(GO_counts$gained), 0, GO_counts$gained)
+  GO_counts$lost <- ifelse(is.na(GO_counts$lost), 0, GO_counts$lost)
+  
+  total_gains <- sum(GO_counts$gained)
+  total_losses <- sum(GO_counts$lost)
+  GO_counts$prop_gained <- GO_counts$gained / total_gains
+  GO_counts$prop_lost <- GO_counts$lost / total_losses
+  GO_counts$diff <- GO_counts$gained - GO_counts$lost
+  GO_counts$prop_diff <- GO_counts$prop_gained - GO_counts$prop_lost
+  GO_counts$sum <- GO_counts$gained + GO_counts$lost
+  
+  if(nrow(filter(GO_counts, gained != 0)) != 0) {
+    # fishertest: IF EACH GO TERM IS GAINED MORE IN NODE THAN IN OTHER NODES
+    # a = number of GO_term gains in anthozoa
+    # b = number of other GO terms gained in anthozoa
+    # c = number of GO_term gains in other nodes
+    # d = number of other GO term gains in other nodes 
+    b = as.numeric(length(DATA[[NODE,2]]))
+    all_GO_gains <- unlist(DATA$g_GOs, recursive = TRUE)
+    d = as.numeric(length(all_GO_gains))
+    all_GO_gain_counts <- table(all_GO_gains)
+    
+    GO_counts <- GO_counts %>% rowwise() %>% 
+      mutate(pval_gain = {
+        term <- GO_term
+        if (term %in% names(all_GO_gain_counts)) {
+          a <- gained
+          c <- all_GO_gain_counts[[term]]
+          mat <- matrix(c(a, b - a, c, d - c), nrow = 2, byrow = TRUE)
+          fisher.test(mat, alternative = "greater")$p.value
+        } else {
+          1
+        }
+      }) %>% 
+      ungroup()
+    GO_counts$padj_gain <- p.adjust(GO_counts$pval_gain, method = "bonferroni")
+  }  
+  if(nrow(filter(GO_counts, lost != 0)) != 0) {
+    # fishertest: IF EACH GO TERM IS LOST MORE IN NODE THAN IN OTHER NODES
+    # a = number of GO_term losses in anthozoa
+    # b = number of other GO terms lost in anthozoa
+    # c = number of GO_term losses in other nodes
+    # d = number of other GO term losses in other nodes 
+    b = as.numeric(length(DATA[[NODE,3]]))
+    all_GO_losses <- unlist(DATA$l_GOs, recursive = TRUE)
+    d = as.numeric(length(all_GO_losses))
+    all_GO_loss_counts <- table(all_GO_losses)
+    
+    GO_counts <- GO_counts %>% rowwise() %>% 
+      mutate(pval_loss = {
+        term <- GO_term
+        if (term %in% names(all_GO_loss_counts)) {
+          a <- lost
+          c <- all_GO_loss_counts[[term]]
+          mat <- matrix(c(a, b - a, c, d - c), nrow = 2, byrow = TRUE)
+          fisher.test(mat, alternative = "greater")$p.value
+        } else {
+          1
+        }
+      }) %>% 
+      ungroup()
+    GO_counts$padj_loss <- p.adjust(GO_counts$pval_loss, method = "bonferroni")
+  }  
+  
+  
+  return(GO_counts)
+}
+
+focal_nodes$GO_df <- c("anth_GO", "anth2_GO", "endomed_GO", "med_GO", "endo_GO", "scs_GO", "hyd_GO", "myx_GO", "hex_GO", "cer_GO", "oct_GO", "scler_GO", "scyph_GO", "cubscyph_GO") 
+
+for (i in 1:nrow(focal_nodes)) {
+  print(i)
+  assign(focal_nodes$GO_df[i], GO_setup(focal_nodes$node_number[i]))
+}
+
+```
+
+
+Goal: make a plot for a specified node that has GO terms as the y axis and bars going to the right for gains and left for losses to compare which GOs are gained and lost at the node 
+
+```{r GO_figure_tsvs}
+
+dir.create("./go_figure")
+dir.create("./go_figure/input")
+
+process <- function(GO_df, node_name) {
+  gain <- GO_df %>% 
+    dplyr::select(c("GO_term", "padj_gain")) %>% 
+    mutate(padj_gain = if_else(padj_gain == 0, 1e-300, padj_gain))
+  write_tsv(gain, file.path("./go_figure/input", paste0(node_name, "_gain.tsv")), col_names = FALSE)
+  loss <- GO_df %>% 
+    dplyr::select(c("GO_term", "padj_loss")) %>% 
+    mutate(padj_loss = if_else(padj_loss == 0, 1e-300, padj_loss))
+  write_tsv(loss, file.path("./go_figure/input", paste0(node_name, "_loss.tsv")), col_names = FALSE)
+}
+
+
+for (i in 1:nrow(focal_nodes)) {
+  process(get(focal_nodes$GO_df[i]), focal_nodes$node_name[i])
+}
+
+
+```
+
+```{r GO_figure_replot}
+library(ggforce)
+library(dplyr)
+library(readr)
+library(this.path)
+setwd(this.dir())
+library(cowplot)
+
+
+focal_nodes <- data.frame(
+  node_name = c("anth", "anth2", "endomed", "med", "endo", "scs", "hyd", "myx", "hex", "cer", "oct", "scler", "scyph", "cubscyph"),
+  node_name_full = c("Anthozoa", "Anthozoa2", "Endocnidozoa_Medusozoa", "Medusozoa", "Endocnidozoa", "Acraspida", "Hydrozoa", "Myxozoa", "Hexacorallia", "Ceriantheria", "Octocorallia", "Scleractinia", "Scyphozoa", "Cubozoa_Scyphozoa"),
+  GO_df = c("anth_GO", "anth2_GO", "endomed_GO", "med_GO", "endo_GO", "scs_GO", "hyd_GO", "myx_GO", "hex_GO", "cer_GO", "oct_GO", "scler_GO", "scyph_GO", "cubscyph_GO"),
+  node_number = c(86, 87 ,84 ,83 ,129, 132, 82, 130, 88, 113, 117, 91, 136, 133)
+  )
+
+dir <- "/Users/oliviatatro/Downloads/surf/eggnog/go_figure_tsvs"
+
+named_colors <- c(`Other / Unclassified` = "grey25",
+                  `Behavior, Movement, & Environmental Response` = "firebrick4", 
+                  `Cell Communication & Signaling` = "#994C00", 
+                  `Cell Cycle & Division` = "#666600",
+                  `Cellular Transport & Localization` = "#006633",
+                  `Development & Morphogenesis` = "#006666",
+                  `Gene Expression & Regulation` = "#003366",
+                  `Immune & Defense Response` = "#4B0082",
+                  `Metabolism & Biosynthesis` = "violetred4",
+                  `Cytoplasm & Cytosol` = "red",
+                  `Cytoskeleton & Cell Junctions` = "chocolate1",
+                  `Endomembrane System & Vesicles` = "#C4FF3B",
+                  `Extracellular Region & Matrix` = "green3",
+                  `Membrane-Bound Organelles` = "turquoise3",
+                  `Nucleus & Chromatin` = "dodgerblue3",
+                  `Plasma Membrane & Cell Periphery` = "darkviolet",
+                  `Synapse & Specialized Structure` = "#FF3BC4",
+                  `Binding (Small Molecule, Ion, Cofactor)` = "#FF9999",
+                  `Catalytic Activity` = "#FFB266",
+                  `Molecular Adaptors & Modulators` = "#FFFF99",
+                  `Motor & Mechanical Activity` = "darkolivegreen2",
+                  `Signal Transduction Activity` = "#99FFCC",
+                  `Structural Molecule Activity` = "#99CCFF",
+                  `Transcription Regulator Activity` = "#CC99FF",
+                  `Transporter Activity` = "#FF99CC")
+
+# PLOT FUNCTION ----------------------------------------------------------------
+#DOTS <- file.path(dir, paste0(focal_nodes$node_name[1], "_gain"), paste0("biological_process_output_", focal_nodes$node_name[1], "_gain.tsv"))
+#CATS <- "/Users/oliviatatro/Downloads/surf/eggnog/go_figure/BP_classified.csv" 
+#TITLE <- "anth"
+
+gofigureplot <- function(data, TITLE) {
+  plot <- ggplot() +
+    geom_circle(data = filter(data, pval >= 0.01), aes(x0 = x, y0 = y, r = log(size)/20, fill = I("grey70"), col = I("grey70")), stroke = 1, alpha = 0.3) +
+    geom_circle(data = filter(data, pval < 0.01), aes(x0 = x, y0 = y, r = log(size)/20, fill = category, col = category), stroke = 1, alpha = 0.7) +
+    scale_fill_manual(values = named_colors) +
+    scale_color_manual(values = named_colors) +
+    scale_x_continuous(limits = c(-2.1,2.1)) +
+    scale_y_continuous(limits = c(-2.1,2.1)) +
+    ggtitle(TITLE) +
+    theme_bw() +
+    theme(legend.position = "none") 
+}
+
+plots <- list()
+
+
+bp_cats <- "/Users/oliviatatro/Downloads/surf/GO_classifications/BP_classified_bio.csv"
+cc_cats <- "/Users/oliviatatro/Downloads/surf/GO_classifications/CC_classified_bio.csv"
+mf_cats <- "/Users/oliviatatro/Downloads/surf/GO_classifications/MF_classified_bio.csv"
+TITLE <- "test"
+transform <- function(num) {
+  return((-log10(num)/300)^(1/2)) # range: 0 to 1
+}
+ROW <- 1
+
+gofigure_data <- data.frame(description = character(), x = numeric(), y = numeric(), pval = numeric(), category = character(), size = numeric(), node = character(), event = character())
+
+gofigure <- function(ROW) {
+  # BP 
+  cats <- as.data.frame(read_csv(bp_cats))
+  # GAIN
+  filepath <- file.path(dir, focal_nodes$node_name[ROW], "gain", paste0("biological_process_", focal_nodes$node_name[ROW], "__gain.tsv"))
+  TITLE <- paste(focal_nodes$node_name[[ROW]], "bp gain")
+  if (file.exists(filepath)) {
+    dots <- as.data.frame(read_tsv(filepath)) %>% 
+      merge(cats, by = "description") %>% 
+      mutate(node = focal_nodes$node_name_full[ROW], event = "gain", ontology = "bp") %>% 
+      dplyr::select(c(description, x, y, pval, category, user, node, event, ontology)) %>% rename(size = user)
+    gofigure_data <<- rbind(gofigure_data, dots)
+    plots[[TITLE]] <<- gofigureplot(dots, TITLE)
+  } else {
+    plots[[TITLE]] <<- ggplot() + theme_void()
+  }
+  # LOSS
+  filepath <- file.path(dir, focal_nodes$node_name[ROW], "loss", paste0("biological_process_", focal_nodes$node_name[ROW], "__loss.tsv"))
+  TITLE <- paste(focal_nodes$node_name[[ROW]], "bp loss")
+  if (file.exists(filepath)) {
+    dots <- as.data.frame(read_tsv(filepath)) %>% 
+      merge(cats, by = "description") %>% 
+      mutate(node = focal_nodes$node_name_full[ROW], event = "loss", ontology = "bp") %>% 
+      dplyr::select(c(description, x, y, pval, category, user, node, event, ontology)) %>% rename(size = user)
+    gofigure_data <<- rbind(gofigure_data, dots)
+    plots[[TITLE]] <<- gofigureplot(dots, TITLE)
+  } else {
+    plots[[TITLE]] <<- ggplot() + theme_void()
+  }
+  
+  # CC 
+  cats <- as.data.frame(read_csv(cc_cats))
+  # GAIN
+  filepath <- file.path(dir, focal_nodes$node_name[ROW], "gain", paste0("cellular_component_", focal_nodes$node_name[ROW], "__gain.tsv"))
+  TITLE <- paste(focal_nodes$node_name[[ROW]], "cc gain")
+  if (file.exists(filepath)) {
+    dots <- as.data.frame(read_tsv(filepath)) %>% 
+      merge(cats, by = "description") %>% 
+      mutate(node = focal_nodes$node_name_full[ROW], event = "gain", ontology = "cc") %>% 
+      dplyr::select(c(description, x, y, pval, category, user, node, event, ontology)) %>% rename(size = user)
+    gofigure_data <<- rbind(gofigure_data, dots)
+    plots[[TITLE]] <<- gofigureplot(dots, TITLE)
+  } else {
+    plots[[TITLE]] <<- ggplot() + theme_void()
+  }
+  # LOSS
+  filepath <- file.path(dir, focal_nodes$node_name[ROW], "loss", paste0("cellular_component_", focal_nodes$node_name[ROW], "__loss.tsv"))
+  TITLE <- paste(focal_nodes$node_name[[ROW]], "cc loss")
+  if (file.exists(filepath)) {
+    dots <- as.data.frame(read_tsv(filepath)) %>% 
+      merge(cats, by = "description") %>% 
+      mutate(node = focal_nodes$node_name_full[ROW], event = "loss", ontology = "cc") %>% 
+      dplyr::select(c(description, x, y, pval, category, user, node, event, ontology)) %>% rename(size = user)
+    gofigure_data <<- rbind(gofigure_data, dots)
+    plots[[TITLE]] <<- gofigureplot(dots, TITLE)
+  } else {
+    plots[[TITLE]] <<- ggplot() + theme_void()
+  }
+  
+  # MF
+  cats <- as.data.frame(read_csv(mf_cats))
+  # GAIN
+  filepath <- file.path(dir, focal_nodes$node_name[ROW], "gain", paste0("molecular_function_", focal_nodes$node_name[ROW], "__gain.tsv"))
+  TITLE <- paste(focal_nodes$node_name[[ROW]], "mf gain")
+  if (file.exists(filepath)) {
+    dots <- as.data.frame(read_tsv(filepath)) %>% 
+      merge(cats, by = "description") %>% 
+      mutate(node = focal_nodes$node_name_full[ROW], event = "gain", ontology = "mf") %>% 
+      dplyr::select(c(description, x, y, pval, category, user, node, event, ontology)) %>% rename(size = user)
+    gofigure_data <<- rbind(gofigure_data, dots)
+    plots[[TITLE]] <<- gofigureplot(dots, TITLE)
+  } else {
+    plots[[TITLE]] <<- ggplot() + theme_void()
+  }
+  # LOSS
+  filepath <- file.path(dir, focal_nodes$node_name[ROW], "loss", paste0("molecular_function_", focal_nodes$node_name[ROW], "__loss.tsv"))
+  TITLE <- paste(focal_nodes$node_name[[ROW]], "mf loss")
+  if (file.exists(filepath)) {
+    dots <- as.data.frame(read_tsv(filepath)) %>% 
+      merge(cats, by = "description") %>% 
+      mutate(node = focal_nodes$node_name_full[ROW], event = "loss", ontology = "mf") %>% 
+      dplyr::select(c(description, x, y, pval, category, user, node, event, ontology)) %>% rename(size = user)
+    gofigure_data <<- rbind(gofigure_data, dots)
+    plots[[TITLE]] <<- gofigureplot(dots, TITLE)
+  } else {
+    plots[[TITLE]] <<- ggplot() + theme_void()
+  }
+}
+
+for (i in 1:nrow(focal_nodes)){
+  gofigure(i)
+}
+
+pdf("../figures/eggnog_go_figure_gl_size.pdf", width = 24, height = 44) # width = 18, height = 33)
+plot_grid(plotlist = plots, ncol = 6)
+dev.off()
+
+# LEGEND ----
+
+CATS <- rbind(read_csv(bp_cats), read_csv(cc_cats), read_csv(mf_cats))
+categories <- names(named_colors)
+dots <- data.frame(description = paste0("des_", seq_along(categories)), x = 1, y = 1, size = 1, pval = 1, category = factor(categories, levels = categories))
+plot_legend <- ggplot(dots) +
+  geom_circle(aes(x0 = x, y0 = y, r = size/10, fill = category), col = "black", alpha = 0.8) +
+  scale_fill_manual(values = named_colors,
+                    guide = guide_legend(ncol = 1)) 
+legend <- get_legend(plot_legend)
+
+pdf("../figures/bubble_plot_legends.pdf", width = 10, height = 8)
+plot_grid(legend)
+dev.off()
+
+gofigure_data %>% 
+  filter(
+    #node == "Anthozoa",
+    event == "loss",
+    #category == "Negative Regulation",
+    pval < 0.01
+  ) %>% 
+  select(c(category, description, size)) %>% 
+  arrange(category)
+
+```
+
+```{r go_figure_replot_correct}
+
+library(ggforce)
+library(dplyr)
+library(readr)
+library(this.path)
+setwd(this.dir())
+library(cowplot)
+
+focal_nodes <- data.frame(node_number = c(132, 133, 103, 104, 129, 130, 105, 116, 163, 159, 134, 137, 120, 108, 102), node_name = c("anth", "anth2", "endomed", "med", "endo", "myx", "hyd", "acr", "oct", "cer", "hex", "scler", "scyph", "siph", "cnid"))
+
+dir <- "/Users/oliviatatro/Downloads/surf/eggnog/go_figure_tsvs"
+
+named_colors <- c(`Behavior and Movement` = "#dcbeff", 
+                  `Cell Communication and Signaling` = "#9A6324", 
+                  `Cell Cycle and Division` = "#ffe119",
+                  `Development` = "#006666",
+                  `Gene Expression and Regulation` = "#e6194B",
+                  `Immune Response` = "#911eb4",
+                  `Metabolism` = "#800000",
+                  `Response to Stress and Stimuli` = "#4363d8",
+                  `Nutrient Uptake and Exchange` = "#f58231",
+                  `Energy Production and Conversion` = "#3cb44b",
+                  `Homeostasis` = "#42d4f4",
+                  `Structural Organization and Cytoskeleton` = "#aaffc3",
+                  `Reproduction` = "#ffd8b1",
+                  `Nervous Systen Processes` = "hotpink2", 
+                  `Cellular Transport and Localization` = "#000075")
+
+
+
+
+
+# PLOT FUNCTION ----------------------------------------------------------------
+#DOTS <- file.path(dir, paste0(focal_nodes$node_name[1], "_gain"), paste0("biological_process_output_", focal_nodes$node_name[1], "_gain.tsv"))
+#CATS <- "/Users/oliviatatro/Downloads/surf/eggnog/go_figure/BP_classified.csv" 
+#TITLE <- "anth"
+
+
+cats <- read.csv("/Users/oliviatatro/Downloads/surf/GO_classifications/categories.csv")
+
+gofigure_data <- data.frame(description = character(), x = numeric(), y = numeric(), pval = numeric(), category = character(), size = numeric(), node = character(), event = character())
+
+ontologies <- data.frame(full = c("biological_process_", "cellular_component_", "molecular_function_"), abr = c("bp", "cc", "mf"))
+
+for (row in 1:nrow(focal_nodes)) {
+  for (ont in 1:nrow(ontologies)) {
+    for (event in c("gain", "loss")) {
+      filepath <- file.path(dir, focal_nodes$node_name[row], event, paste0(ontologies$full[ont], "go_figure_tsvs_", focal_nodes$node_name[row], "_", event, ".tsv"))
+      if (file.exists(filepath)) {
+        dots <- as.data.frame(read_tsv(filepath)) %>% 
+          merge(cats, by = "description") %>% 
+          mutate(node = focal_nodes$node_name[row], event = event, ontology = ontologies$abr[ont]) %>% 
+          dplyr::select(c(description, x, y, pval, user, category, node, event, ontology)) %>%
+          dplyr::rename(size = "user")
+        gofigure_data <- rbind(gofigure_data, dots)
+      }
+    }
+  }
+}
+
+unique(sort(gofigure_data$category))
+
+gofigureplot <- function(NODE, EVENT, DATA) {
+  dots <- DATA %>% filter(node == NODE, event == EVENT) 
+  plot <- ggplot() +
+    geom_circle(data = filter(dots, pval >= 0.01), aes(x0 = x, y0 = y, r = log(size)/20, fill = I("grey70"), col = I("grey70")), stroke = 0.1, alpha = 0.3) +
+    geom_circle(data = filter(dots, pval < 0.01), aes(x0 = x, y0 = y, r = log(size)/20, fill = category, col = category), stroke = 0.1, alpha = 0.7) +
+    ggtitle(paste(NODE, EVENT)) +
+    scale_fill_manual(values = named_colors) +
+    scale_color_manual(values = named_colors) +
+    scale_x_continuous(limits = c(-6,6)) +
+    scale_y_continuous(limits = c(-6,6)) +
+    theme_void() +
+    theme(legend.position = "none",
+          axis.title = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+          plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt"))
+  return(plot) 
+}
+
+plots <- list()
+
+#gofigureplot("anth", "gain", gofigure_data)
+for (node in focal_nodes$node_name) {
+  for (event in c("gain", "loss")) {
+    print(paste(node, event))
+    plots[[paste(node, event)]] <- gofigureplot(node, event, gofigure_data)
+  }
+}
+
+
+# LEGEND ----
+categories <- names(named_colors)
+dots <- data.frame(description = paste0("des_", seq_along(categories)), x = 1, y = seq_along(categories) * 2, size = 0.88, pval = 1, category = factor(categories, levels = categories))
+legend_dots <- 
+  ggplot(dots) +
+  geom_circle(aes(x0 = x, y0 = y, r = size, fill = category, col = category), alpha = 0.7) +
+  scale_fill_manual(values = named_colors) + #, guide = guide_legend(ncol = 1)
+  scale_color_manual(values = named_colors) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_x_continuous(limits = c(0,2)) +
+  scale_y_continuous(limits = c(1,51))
+legend_text <- 
+  ggplot(dots) +
+  geom_text(aes(y = y, label = category), x = 0, hjust = 0, cex = 3) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_x_continuous(limits = c(0,1.05)) +
+  scale_y_continuous(limits = c(1,51))
+legend <- plot_grid(legend_dots, legend_text, nrow = 1, rel_widths = c(0.5, 4.5))
+
+pdf("../figures/eggnog_go.pdf", width = 22, height = 15)
+
+bubbles <- plot_grid(plotlist = plots, nrow = 5)
+fig <- plot_grid(bubbles, legend, rel_widths = c(18,4))
+print(fig)
+
+dev.off()
+
+```
+
+
+```{r bubble_tree, message=FALSE, warning=FALSE}
+
+load("../orthodollo/tree.Rds")
+tree <- tr1
+rm(tr1)
+
+
+#load("/Users/oliviatatro/Downloads/surf/eggnog/eggnog_met.Rdata") 
+setwd("/Users/oliviatatro/Downloads/surf/eggnog/go_figure_tsvs/")
+
+library(ggforce)
+
+library(ggtree)
+
+tree_plot <- ggtree(tree, branch.length = "none") + 
+  geom_tiplab(size = 4, align = TRUE) +
+  scale_y_reverse() +
+  theme(plot.margin = margin(t = 5, r = 40, b = 5, l = 5)) +
+  coord_cartesian(clip = "off") 
+
+tree_data <- tree_plot$data
+
+collapse_nodes <- data.frame(
+  node = c(130, 82, 91, 117, 113, 136, 100, 104, 109, 134, 142),
+  label = c("Myxozoa", " Hydrozoa", "Scleractinia", " Octocorallia", "Ceriantheria", " Scyphozoa", "Corallimorpharia", "Actinaria", "Zoantheria", "Cubozoa", "Staurozoa")
+)
+
+xright <- filter(tree_data, isTip == TRUE)$x[1]
+
+segments <- data.frame(x = numeric(), xend = numeric(), y = numeric(), yend = numeric())
+
+for (i in 1:nrow(collapse_nodes)) {
+  node <- collapse_nodes$node[i]
+  label <- collapse_nodes$label[i]
+  tree_plot <- collapse(tree_plot, node = node)
+  tree_data <- tree_plot$data
+  xstart <- tree_data$x[tree_data$node == node] # x coord of the node
+  extend <- (xright - xstart - 0.285)
+  tree_plot <- tree_plot + 
+    geom_cladelabel(node = node, label = label, offset = extend, barsize = 1) 
+}
+for (i in 1:nrow(collapse_nodes)) {
+  node <- collapse_nodes$node[i]
+  xstart <- tree_data$x[tree_data$node == node] # x coord of the node
+  y <- tree_data$y[tree_data$node == node]
+  segments <- rbind(segments, data.frame(x = xstart, xend = xright, y = y, yend = y))
+}
+
+tree_plot <- tree_plot + geom_segment(data = segments, aes(x = x, xend = xend, y = y, yend = yend))
+
+gofigureplot <- function(NODE, EVENT) {
+  dots <- gofigure_data %>% filter(node == NODE, event == EVENT) 
+  plot <- ggplot() +
+    geom_circle(data = filter(dots, pval >= 0.01), aes(x0 = x, y0 = y, r = log(size)/10, fill = I("grey70"), col = I("grey70")), stroke = 0.1, alpha = 0.3) +
+    geom_circle(data = filter(dots, pval < 0.01), aes(x0 = x, y0 = y, r = log(size)/10, fill = category, col = category), stroke = 0.1, alpha = 0.7) +
+    scale_fill_manual(values = named_colors) +
+    scale_color_manual(values = named_colors) +
+    scale_x_continuous(limits = c(-7,7)) +
+    scale_y_continuous(limits = c(-7,7)) +
+    theme_void() +
+    theme(legend.position = "none", plot.margin = unit(c(0, 0, 0, 0), "cm"), 
+          axis.text = element_blank(), axis.title = element_blank(), axis.ticks = element_blank(),
+          panel.border = element_rect(size = 1, color = "black", fill = NA),
+          panel.background = element_rect(fill = "white", color = NA))
+  return(plot) 
+}
+
+square_size <- 0.65
+gain_tree_plot <- tree_plot
+for (i in 1: nrow(focal_nodes)){
+  goplot <- gofigureplot(focal_nodes$node_name_full[i],"gain")
+  grob_goplot <- ggplotGrob(goplot)
+  print(grob_goplot)
+  thisnode <-focal_nodes$node_number[i]
+  x <- tree_data[tree_data$node == thisnode, ]$x
+  y <- tree_data[tree_data$node == thisnode, ]$y
+  gain_tree_plot <- gain_tree_plot + 
+      annotation_custom(grob = grob_goplot, xmin = x - square_size, xmax = x + square_size, ymin = -y - square_size, ymax = -y + square_size) 
+}
+
+loss_tree_plot <- tree_plot
+for (i in 1: nrow(focal_nodes)){
+  goplot <- goplot <- gofigureplot(focal_nodes$node_name_full[i],"loss")
+  grob_goplot <- ggplotGrob(goplot)
+  print(grob_goplot)
+  thisnode <-focal_nodes$node_number[i]
+  x <- tree_data[tree_data$node == thisnode, ]$x
+  y <- tree_data[tree_data$node == thisnode, ]$y
+  loss_tree_plot <- loss_tree_plot + 
+      annotation_custom(grob = grob_goplot, xmin = x - square_size, xmax = x + square_size, ymin = -y - square_size, ymax = -y + square_size) 
+}
+
+
+
+pdf("/Users/oliviatatro/Downloads/surf/figures/eggnog_bubble_trees.pdf", height = 12, width = 16)
+plot_grid(gain_tree_plot, legend, nrow = 1, rel_widths = c(12, 4))
+plot_grid(loss_tree_plot, legend, nrow = 1, rel_widths = c(12, 4))
+dev.off()
+
+write_csv(filter(gofigure_data, pval < 0.01), "../go_figure_data_sig.csv")
+write_csv(gofigure_data, "../go_figure_data_all.csv")
+
+```
+
+
+# ------------------------- COGs -------------------------
+
+COG categories 
+J - TRANSLATION, RIBOSOMAL STRUCTURE AND BIOGENESIS
+A - RNA PROCESSING AND MODIFICATION
+K - TRANSCRIPTION
+L - REPLICATION, RECOMBINATION AND REPAIR
+B - CHROMATIN STRUCTURE AND DYNAMICS
+D - CELL CYCLE CONTROL, CELL DIVISION, CHROMOSOME PARTITIONING
+Y - NUCLEAR STRUCTURE 
+V - DEFENSE MECHANISMS
+T - SIGNAL TRANSDUCTION MECHANISMS
+M - CELL WALL/MEMBRANE/ENVELOPE BIOGENESIS
+N - CELL MOTILITY 
+Z - CYTOSKELETON
+W - EXTRACELLULAR STRUCTURES
+U - INTRACELLULAR TRAFFICKING, SECRETION, AND VESICULAR TRANSPORT
+O - POSTTRANSLATIONAL MODIFICATION, PROTEIN TURNOVER, CHAPERONES
+X - NAN
+C - ENERGY PRODUCTION AND CONVERSION
+G - CARBOHYDRATE TRANSPORT AND METABOLISM
+E - AMINO ACID TRANSPORT AND METABOLISM
+F - NUCLEOTIDE TRANSPORT AND METABOLISM
+H - COENZYME TRANSPORT AND METABOLISM
+I - LIPID TRANSPORT AND METABOLISM
+P - INORGANIC ION TRANSPORT AND METABOLISM
+Q - SECONDARY METABOLITES BIOSYNTHESIS, TRANSPORT AND CATABOLISM
+R - GENERAL FUNCTION PREDICTION ONLY
+S - FUNCTION UNKNOWN 
+```{r COG_setup_function, eval=FALSE}
+DATA = COGs
+NODE = 86
+COG_setup <- function(NODE, DATA = COGs) {
+  
+  gains <- DATA$g_COGs[[NODE]]
+  losses <- DATA$l_COGs[[NODE]]
+  
+  # take a row of the GOs dataframe and make count tables with each GO term and how many are in gains and losses (may need to do this separately and then cbind)
+  if (all(is.na(gains))) {
+    g_counts <- data.frame(COG_term = character(), gained = numeric())
+  } else {
+    g_counts <- as.data.frame(table(gains))
+    colnames(g_counts) <- c("COG_term", "gained")
+  }
+
+  if (all(is.na(losses))) {
+    l_counts <- data.frame(COG_term = character(), lost = numeric())
+  } else {
+    l_counts <- as.data.frame(table(losses))
+    colnames(l_counts) <- c("COG_term", "lost")
+  }
+  #g_counts <- as.data.frame(table(DATA[NODE,2]))
+  #colnames(g_counts) <- c("GO_term", "gained")
+  #l_counts <- as.data.frame(table(DATA[NODE,3]))
+  #colnames(l_counts) <- c("GO_term", "lost")
+  
+  COG_counts <- merge(g_counts, l_counts, by = "COG_term", all = TRUE)
+  COG_counts$COG_term <- factor(COG_counts$COG_term, levels = COG_counts$COG_term)
+  COG_counts$gained <- ifelse(is.na(COG_counts$gained), 0, COG_counts$gained)
+  COG_counts$lost <- ifelse(is.na(COG_counts$lost), 0, COG_counts$lost)
+  
+  total_gains <- sum(COG_counts$gained)
+  total_losses <- sum(COG_counts$lost)
+  COG_counts$prop_gained <- COG_counts$gained / total_gains
+  COG_counts$prop_lost <- COG_counts$lost / total_losses
+  COG_counts$diff <- COG_counts$gained - COG_counts$lost
+  COG_counts$prop_diff <- COG_counts$prop_gained - COG_counts$prop_lost
+  COG_counts$sum <- COG_counts$gained + COG_counts$lost
+  
+  if(nrow(filter(COG_counts, gained != 0)) != 0) {
+    # fishertest: IF EACH GO TERM IS GAINED MORE (fraction wise) IN NODE THAN IN OTHER NODES
+    # a = number of GO_term gains in anthozoa
+    # b = number of other GO terms gained in anthozoa
+    # c = number of GO_term gains in other nodes
+    # d = number of other GO term gains in other nodes 
+    b = as.numeric(length(DATA[[NODE,2]]))
+    all_COG_gains <- unlist(DATA$g_COGs, recursive = TRUE)
+    d = as.numeric(length(all_COG_gains))
+    all_COG_gain_counts <- table(all_COG_gains)
+    
+    COG_counts <- COG_counts %>% rowwise() %>% 
+      mutate(pval_gain = {
+        term <- COG_term
+        if (term %in% names(all_COG_gain_counts)) {
+          a <- gained
+          c <- all_COG_gain_counts[[term]]
+          mat <- matrix(c(a, b - a, c, d - c), nrow = 2, byrow = TRUE)
+          fisher.test(mat, alternative = "greater")$p.value
+        } else {
+          1
+        }
+      }) %>% 
+      ungroup()
+    COG_counts$padj_gain <- p.adjust(COG_counts$pval_gain, method = "bonferroni")
+  }  
+  if(nrow(filter(COG_counts, lost != 0)) != 0) {
+    # fishertest: IF EACH GO TERM IS LOST MORE IN NODE THAN IN OTHER NODES
+    # a = number of GO_term losses in anthozoa
+    # b = number of other GO terms lost in anthozoa
+    # c = number of GO_term losses in other nodes
+    # d = number of other GO term losses in other nodes 
+    b = as.numeric(length(DATA[[NODE,3]]))
+    all_COG_losses <- unlist(DATA$l_COGs, recursive = TRUE)
+    d = as.numeric(length(all_COG_losses))
+    all_COG_loss_counts <- table(all_COG_losses)
+    
+    COG_counts <- COG_counts %>% rowwise() %>% 
+      mutate(pval_loss = {
+        term <- COG_term
+        if (term %in% names(all_COG_loss_counts)) {
+          a <- lost
+          c <- all_COG_loss_counts[[term]]
+          mat <- matrix(c(a, b - a, c, d - c), nrow = 2, byrow = TRUE)
+          fisher.test(mat, alternative = "greater")$p.value
+        } else {
+          1
+        }
+      }) %>% 
+      ungroup()
+    COG_counts$padj_loss <- p.adjust(COG_counts$pval_loss, method = "bonferroni")
+  }  
+  
+  
+  return(COG_counts)
+}
+
+
+focal_nodes$COG_df <- c("anth_COG", "anth2_COG", "endomed_COG", "med_COG", "endo_COG", "scs_COG", "hyd_COG", "myx_COG", "hex_COG", "cer_COG", "oct_COG", "scler_COG", "scyph_COG", "cubscyph_COG")
+
+```
+COG_setup <- function(NODE) {
+
+  # take a row of the GOs dataframe and make count tables with each GO term and how many are in gains and losses (may need to do this separately and then cbind)
+  g_counts <- as.data.frame(table(COGs[NODE,2]))
+  colnames(g_counts) <- c("COG_term", "gained")
+  l_counts <- as.data.frame(table(COGs[NODE,3]))
+  colnames(l_counts) <- c("COG_term", "lost")
+  
+  COG_counts <- merge(g_counts, l_counts, by = "COG_term", all = TRUE)
+  COG_counts$COG_term <- factor(COG_counts$COG_term, levels = COG_counts$COG_term)
+  COG_counts$gained[is.na(COG_counts$gained)] <- 0
+  COG_counts$lost[is.na(COG_counts$lost)] <- 0
+  
+  total_gains <- sum(COG_counts$gained)
+  total_losses <- sum(COG_counts$lost)
+  COG_counts$prop_gained <- COG_counts$gained / total_gains
+  COG_counts$prop_lost <- COG_counts$lost / total_losses
+  COG_counts$diff <- COG_counts$gained - COG_counts$lost
+  COG_counts$prop_diff <- COG_counts$prop_gained - COG_counts$prop_lost
+  COG_counts$sum <- COG_counts$gained + COG_counts$lost
+  
+  # fishertest: IF EACH GO TERM IS GAINED MORE IN NODE THAN IN OTHER NODES
+  # a = number of GO_term gains in anthozoa
+  # b = number of other GO terms gained in anthozoa
+  # c = number of GO_term gains in other nodes
+  # d = number of other GO term gains in other nodes 
+  b = sum(!is.na(COGs[[NODE, 2]]))
+  all_COG_gains <- unlist(COGs$g_COGs, recursive = TRUE)
+  all_COG_gains <- all_COG_gains[!is.na(all_COG_gains)]
+  d = as.numeric(length(all_COG_gains))
+  all_COG_gain_counts <- table(all_COG_gains) 
+  #all_COG_gain_counts <- all_COG_gain_counts[-23]  
+  
+  COG_counts$pval_fisher <- apply(COG_counts, 1, function(row) {
+    a <- as.numeric(row["gained"])
+    c <- as.numeric(all_COG_gain_counts[[row["COG_term"]]])
+    mat <- matrix(c(a,b-a,c,d-c),nrow = 2, byrow = TRUE)
+    fisher.test(mat, alternative = "greater")$p.value
+  })
+  COG_counts$padj_fisher <- p.adjust(COG_counts$pval_fisher, method = "bonferroni")
+  return(COG_counts)
+}
+
+
+```{r COG_plot_functions, eval=FALSE}
+
+COG_sand_plot <- function(DATA, TITLE = NULL) {
+  data <- DATA %>% mutate(
+    gain_col = ifelse(padj_gain < 0.01, "sig_gain", "notsig"), 
+    loss_col = ifelse(padj_loss < 0.01, "sig_loss", "notsig")
+  ) 
+  count <-  
+    ggplot(data, aes(y = reorder(COG_term, -sum), x = sum)) + #aes(y = reorder(GO_term, -sum), x = sum)
+      geom_col(aes(x = gained, fill = gain_col)) +    
+      geom_col(aes(x = -lost, fill = loss_col)) +       
+      scale_fill_manual(values = c("sig_gain" = "seagreen", "sig_loss" = "maroon", "notsig" = "grey70")) +
+      labs(x = "Count", y = "COG term", title = TITLE) +
+      theme_minimal() +
+      theme(axis.text.y = element_text(size = 4)) +
+      theme(legend.position = "none") +
+      scale_x_continuous(labels = abs) 
+  
+  prop <- 
+    ggplot(data, aes(y = reorder(COG_term, -sum), x = sum)) + #aes(y = reorder(GO_term, -sum), x = sum)
+      geom_col(aes(x = prop_gained, fill = gain_col)) +    
+      geom_col(aes(x = -prop_lost, fill = loss_col)) +       
+      scale_fill_manual(values = c("sig_gain" = "seagreen", "sig_loss" = "maroon", "notsig" = "grey70")) +
+      labs(x = "Proportion of all gains/losses", y = "COG term", title = "") +
+      theme_minimal() +
+      theme(axis.text.y = element_blank()) +
+      theme(legend.position = "none") +
+      scale_x_continuous(labels = abs)
+  
+  diff <- 
+    ggplot(data, aes(y = reorder(COG_term, -sum), x = sum)) + #aes(y = reorder(GO_term, -sum), x = sum)
+      geom_col(aes(x = diff), fill = "steelblue") +    
+      geom_col(aes(x = -prop_lost, fill = loss_col)) +
+      labs(x = "gains - losses", y = "COG term", title = "") +
+      theme_minimal() +
+      theme(axis.text.y = element_blank()) +
+      theme(legend.position = "none") +
+      scale_x_continuous(labels = abs)
+  
+  plot <- plot_grid(count, prop, diff, nrow = 1)
+  return(plot)
+  
+}
+
+cog_plots <- list()
+
+for (i in 1:nrow(focal_nodes)) {
+  assign(focal_nodes$COG_df[i], COG_setup(focal_nodes$node_number[i]))
+  cog_plots[[i]] <- COG_sand_plot(get(focal_nodes$COG_df[i]), focal_nodes$node_name[i])
+}
+pdf("../figures/COGs/cog_sand_plots.pdf", width = 8, height = 44)
+plot_grid(plotlist = cog_plots, ncol = 1)
+dev.off()
+
+```
+
+
+
+```{r COG_pies, eval=FALSE}
+
+# colors 
+cog_colors <- c(A = "firebrick4", 
+                B = "#994C00", 
+                C = "#666600",
+                D = "#006633",
+                E = "#006666",
+                F = "#003366",
+                G = "#4B0082",
+                H = "violetred4",
+                I = "red",
+                J = "chocolate1",
+                K = "#C4FF3B",
+                L = "green3",
+                M = "turquoise3",
+                N = "dodgerblue3",
+                O = "darkviolet",
+                P = "#FF3BC4",
+                Q = "#FF9999",
+                S = "#FFB266",
+                T = "#FFFF99",
+                U = "darkolivegreen2",
+                V = "#99FFCC",
+                W = "#99CCFF",
+                Y = "#CC99FF",
+                Z = "#FF99CC", 
+                R = "grey50")
+
+cog_labels <- c(
+  "A: RNA Processing and Modification",                # A
+  "B: Chromatin Structure and Dynamics",              # B
+  "C: Energy Production and Conversion",              # C
+  "D: Cell Cycle Control, Cell Division, Chromosome Partitioning", # D
+  "E: Amino Acid Transport and Metabolism",           # E
+  "F: Nucleotide Transport and Metabolism",           # F
+  "G: Carbohydrate Transport and Metabolism",         # G
+  "H: Coenzyme Transport and Metabolism",             # H
+  "I: Lipid Transport and Metabolism",                # I
+  "J: Translation, Ribosomal Structure and Biogenesis", # J
+  "K: Transcription",                                 # K
+  "L: Replication, Recombination and Repair",        # L
+  "M: Cell Wall/Membrane/Envelope Biogenesis",       # M
+  "N: Cell Motility",                                 # N
+  "O: Posttranslational Modification, Protein Turnover, Chaperones", # O
+  "P: Inorganic Ion Transport and Metabolism",       # P
+  "Q: Secondary Metabolites Biosynthesis, Transport and Catabolism", # Q
+  "S: Function Unknown",                              # S
+  "T: Signal Transduction Mechanisms",               # T
+  "U: Intracellular Trafficking, Secretion, and Vesicular Transport", # U
+  "V: Defense Mechanisms",                            # V
+  "W: Extracellular Structures",                      # W
+  "Y: Nuclear Structure",                             # Y
+  "Z: Cytoskeleton",                                   # Z
+  "R: General Function Prediction Only"             # R
+)
+
+
+
+
+# GAIN ----------------------------------------------------------------------
+
+for (NODE in 1:151) {
+  if (is.null(COGs[[NODE,2]])){
+    COGs[NODE,2] <- c("X")
+  }
+}
+
+#make the COG matrix with each cog category being a column and the nodes beign the rows 
+COG_matrix <- COGs %>%
+  dplyr::select(-l_COGs) %>% 
+  unnest(g_COGs) %>%
+  group_by(node, g_COGs) %>%
+  summarize(count = n(), .groups = "drop") %>% 
+  #arrange(g_COGs) %>% 
+  pivot_wider(names_from = g_COGs, values_from = count, values_fill = 0) %>%
+  column_to_rownames("node")
+
+COG_matrix <- COG_matrix[,order(colnames(COG_matrix))]
+COG_matrix <- COG_matrix[,-c(23)] #remove X 
+
+pie_sizes <- rowSums(COG_matrix)
+pie_sizes[151] <- 0 #Setting myriazoa  to 0
+pie_sizes[127] <- 0 #Setting planulazoa  to 0
+pie_sizes[85] <- 0 #Setting cnidaria  to 0
+pie_sizes <- pie_sizes[-(1:76)]
+pie_sizes <- pie_sizes^(1/2)
+pie_sizes <- pie_sizes / max(pie_sizes) *2.5
+
+for (i in 77:151) {
+  print(i)
+  df <- COG_setup(i) %>% 
+    filter(padj_gain < 0.01)
+  for (cog in colnames(COG_matrix)) {
+    if (!(cog %in% df$COG_term)) {
+      COG_matrix[i, cog] <- 0
+    }
+  }
+}
+
+COG_matrix <- COG_matrix / rowSums(COG_matrix)
+COG_matrix <- as.matrix(COG_matrix)
+
+# the original cog_matrix did not work properly because a bunch of the pies were one color, but this manually matches the internal nodes to the rows in COG_matrix
+internal_nodes <- as.character((Ntip(tree) + 1):(Ntip(tree) + Nnode(tree)))
+COG_matrix_ordered <- COG_matrix[internal_nodes, ]
+
+pdf("../figures/COGs/g_COG_tree_piesizes.pdf", width = 8, height = 8)
+plot(tree, cex = 0.5) ; nodelabels(pie = COG_matrix_ordered,
+           node = as.numeric(rownames(COG_matrix_ordered)),
+           piecol = cog_colors,
+           cex = pie_sizes[rownames(COG_matrix_ordered)]) ; legend(x = 1.2, y = 50, legend = cog_labels, fill = cog_colors, ncol = 1, cex = 0.6)
+#plot(tree, cex = 0.5, no.margin = TRUE) ;nodelabels()
+dev.off()
+
+plot(tree, cex = 0.5)
+nodelabels()
+
+# LOSS ----------------------------------------------------------------------
+
+for (NODE in 1:151) {
+  if (is.null(COGs[[NODE,3]])){
+    COGs[NODE,3] <- c("X")
+  }
+}
+
+#make the COG matrix with each cog category being a column and the nodes beign the rows 
+COG_matrix <- COGs %>%
+  dplyr::select(-g_COGs) %>% 
+  unnest(l_COGs) %>%
+  group_by(node, l_COGs) %>%
+  summarize(count = n(), .groups = "drop") %>% 
+  pivot_wider(names_from = l_COGs, values_from = count, values_fill = 0) %>%
+  column_to_rownames("node")
+
+COG_matrix <- COG_matrix[,order(colnames(COG_matrix))]
+COG_matrix <- COG_matrix[,-c(23)] #remove X 
+
+pie_sizes <- rowSums(COG_matrix)
+#pie_sizes[151] <- 0 #Setting myriazoa  to 0
+#pie_sizes[127] <- 0 #Setting planulazoa  to 0
+#pie_sizes[85] <- 0 #Setting cnidaria  to 0
+pie_sizes <- pie_sizes[-(1:76)]
+pie_sizes <- pie_sizes^(1/2)
+pie_sizes <- pie_sizes / max(pie_sizes) * 2
+
+for (i in 77:151) {
+  print(i)
+  df <- COG_setup(i) %>% 
+    filter(padj_loss < 0.01)
+  for (cog in colnames(COG_matrix)) {
+    if (!(cog %in% df$COG_term)) {
+      COG_matrix[i, cog] <- 0
+    }
+  }
+}
+
+COG_matrix <- COG_matrix / rowSums(COG_matrix)
+COG_matrix <- as.matrix(COG_matrix)
+
+# the original cog_matrix did not work properly because a bunch of the pies were one color, but this manually matches the internal nodes to the rows in COG_matrix
+internal_nodes <- as.character((Ntip(tree) + 1):(Ntip(tree) + Nnode(tree)))
+COG_matrix_ordered <- COG_matrix[internal_nodes, ]
+
+pdf("../figures/COGs/l_COG_tree_piesizes.pdf", width = 8, height = 8)
+plot(tree, cex = 0.5) ; nodelabels(pie = COG_matrix_ordered,
+           node = as.numeric(rownames(COG_matrix_ordered)),
+           piecol = cog_colors,
+           cex = pie_sizes[rownames(COG_matrix_ordered)]) ; legend(x = 1.2, y = 50, legend = cog_labels, fill = cog_colors, ncol = 1, cex = 0.6)
+#plot(tree, cex = 0.5, no.margin = TRUE) ;nodelabels()
+dev.off()
+
+```
+
+```{r COG_enrich_setup} 
+COG_enrich_setup <- function(DATA) {
+  
+  COG_pvals <- dplyr::select(DATA, c(COG_term, gained, lost, padj_gain, padj_loss))
+  
+  COG_pvals$gain_col_bar <- ifelse(COG_pvals$padj_gain < 0.01, COG_pvals$gained, 0)
+  COG_pvals$gain_grey_bar <- ifelse(COG_pvals$padj_gain >= 0.01, COG_pvals$gained, 0)
+  COG_pvals$loss_col_bar <- ifelse(COG_pvals$padj_loss < 0.01, COG_pvals$lost, 0)
+  COG_pvals$loss_grey_bar <- ifelse(COG_pvals$padj_loss >= 0.01, COG_pvals$lost, 0)
+  
+  return(COG_pvals)
+}
+
+COG_pvals <- COG_enrich_setup(anth_COG)
+
+```
+
+```{r COG_enrich_plot_functions}
+
+cog_colors <- c(A="#E41A1C",B="#377EB8",C="#4DAF4A",D="#984EA3",E="#FF7F00",F="#FFFF33",G="#A65628",H="#F781BF",I="#999999",J="#66C2A5",K="#FC8D62",L="#8DA0CB",M="#E78AC3",N="#A6D854",O="#FFD92F",P="#E5C494",Q="#B3B3B3",R="#1B9E77",S="#D95F02",T="#7570B3",U="#E7298A",V="#66A61E",W="#E6AB02",Y="#A6761D",Z="#666666",X="black")
+
+barplot <- function(TITLE, COG_pvals) {
+  COG_pvals$COG_term <- as.factor(COG_pvals$COG_term) 
+  COG_pvals <- arrange(COG_pvals, COG_term) %>% 
+    mutate(x = rep(1:n())) 
+  #COG_pvals$gain_col_bar <- sqrt(COG_pvals$gain_col_bar)
+  #COG_pvals$gain_grey_bar <- sqrt(COG_pvals$gain_grey_bar)
+  #COG_pvals$loss_col_bar <- sqrt(COG_pvals$loss_col_bar)
+  #COG_pvals$oss_grey_bar <- sqrt(COG_pvals$loss_grey_bar)
+  shift = 0.22
+  width = 0.4
+  plot <- ggplot(COG_pvals) +
+    geom_bar(aes(x = x + shift, y = gain_grey_bar), stat = "identity", fill = "grey70", width = 0.4) +
+    geom_bar(aes(x = x + shift, y = gain_col_bar, fill = COG_term), stat = "identity", width = 0.4) +
+    geom_bar(aes(x = x - shift, y = loss_grey_bar), stat = "identity", fill = "grey70", width = 0.4) +
+    geom_bar(aes(x = x - shift, y = loss_col_bar, fill = COG_term), stat = "identity", width = 0.4) +
+    scale_fill_manual(values = cog_colors) +
+    labs(title = TITLE,
+         x = "COG Category", y = "Gained centroids") +
+    theme_minimal() +
+    #scale_y_continuous(limits = c(0, 60000)) +
+    scale_x_continuous(breaks = COG_pvals$x, labels = COG_pvals$COG_term) +
+    theme(legend.position = "none") 
+  
+  return(plot) 
+}
+
+# plotting cogs in semantic space from chatGPT
+cog_coords <- data.frame(
+  COG = c("J","A","K","L","B","D","Y",
+          "T","M","N","Z","W","U","O","V",
+          "C","G","E","F","H","I","P","Q"),
+  x = c(-4.2, -3.0, -1.5, 0.2, 1.8,   # Informational
+         3.0, 4.0, -2.8, -1.2, 0.5, 2.0, 3.6, 4.8, 3.3, 1.0,  # Cellular
+        -4.0, -2.0, -0.8, 0.8, 2.4, 3.9, 1.5, -1.5),          # Metabolic
+  y = c(3.5, 4.8, 4.2, 4.7, 4.0,
+        3.0, 2.5, 1.8, 2.6, 1.2, 1.7, 2.2, 1.5, 0.4, -0.2,
+        -1.0, -1.5, -2.8, -2.0, -2.4, -1.6, -3.2, -2.6)
+)
+
+COG_pvals <- COG_enrich_setup(get(focal_nodes$COG_df[1]))
+COG_bubble_plot <- function(TITLE, COG_pvals) {
+  COG_pvals <- merge(COG_pvals, cog_coords, all = TRUE, by.x = "COG_term", by.y = "COG")  
+  
+  COG_pvals$gain_size <- COG_pvals$gained / 10000
+  COG_pvals$loss_size <- COG_pvals$lost / 10000
+  
+  gain_plot <- ggplot() +
+    geom_circle(data = filter(COG_pvals, padj_gain >= 0.01 & gained > 0), aes(x0 = x, y0 = y, r = gain_size, fill = I("grey70")), col = "black", alpha = 0.8) +
+    geom_circle(data = filter(COG_pvals, padj_gain < 0.01 & gained > 0), aes(x0 = x, y0 = y, r = gain_size, fill = COG_term), col = "black", alpha = 0.8) +
+    geom_text(data = filter(COG_pvals, gained > 0), aes(x = x, y = y, label = COG_term), size = 2) +
+    scale_fill_manual(values = cog_colors) +
+    scale_x_continuous(limits = c(-5,5)) +
+    scale_y_continuous(limits = c(-5,5)) +
+    ggtitle(paste(TITLE, "gain")) +
+    theme_bw() +
+    theme(legend.position = "none") 
+  
+  loss_plot <- ggplot() +
+    geom_circle(data = filter(COG_pvals, padj_loss >= 0.01 & lost > 0), aes(x0 = x, y0 = y, r = loss_size, fill = I("grey70")), col = "black", alpha = 0.8) +
+    geom_circle(data = filter(COG_pvals, padj_loss < 0.01 & lost > 0), aes(x0 = x, y0 = y, r = loss_size, fill = COG_term), col = "black", alpha = 0.8) +
+    geom_text(data = filter(COG_pvals, lost > 0), aes(x = x, y = y, label = COG_term), size = 2) +
+    scale_fill_manual(values = cog_colors) +
+    scale_x_continuous(limits = c(-5,5)) +
+    scale_y_continuous(limits = c(-5,5)) +
+    ggtitle(paste(TITLE, "loss")) +
+    theme_bw() +
+    theme(legend.position = "none") 
+  
+  plot <- plot_grid(gain_plot, loss_plot, nrow = 1)
+  return(plot)
+}
+
+```
+
+```{r COG_bar_bubble_plots}
+COG_bar_plots <- list()
+COG_bubble_plots <- list()
+
+for (i in 1:nrow(focal_nodes)) {
+  title <- focal_nodes$node_name_full[i]
+  COG_pvals <- COG_enrich_setup(get(focal_nodes$COG_df[i]))
+  #COG_bar_plots[[i]] <- barplot(title, COG_pvals)
+  COG_bubble_plots[[i]] <- COG_bubble_plot(title, COG_pvals)
+}
+
+#pdf("../figures/COG_bar_plots.pdf", width = 10, height = 20)
+#plot_grid(plotlist = COG_bar_plots, ncol = 2)
+#dev.off()
+
+pdf("../figures/COG_bubble_plots.pdf", width = 10, height = 20)
+plot_grid(plotlist = COG_bubble_plots, ncol = 2)
+dev.off()
+
+```
+
+
+
+
+# ------------------------- KEGG -------------------------
+
+```{r KEGG_setup_function, eval=FALSE}
+library(KEGGREST)
+NODE <- 86
+
+get_name <- function(kegg_pathway) {
+  if(kegg_pathway %in% all_kegg_ids) {
+    keggGet(kegg_pathway)[[1]]$NAME
+  } else {
+    kegg_pathway
+  }
+}
+
+all_kegg_ids <- keggList("pathway", "ko") %>% names()
+
+KEGG_setup <- function(NODE, DATA = KEGG_Pathways) {
+  
+  gains <- DATA$g_KEGG_Pathways[[NODE]]
+  losses <- DATA$l_KEGG_Pathways[[NODE]]
+  
+  # take a row of the GOs dataframe and make count tables with each GO term and how many are in gains and losses (may need to do this separately and then cbind)
+  if (all(is.na(gains))) {
+    g_counts <- data.frame(KEGG_pathway = character(), gained = numeric())
+  } else {
+    g_counts <- as.data.frame(table(gains))
+    colnames(g_counts) <- c("KEGG_pathway", "gained")
+  }
+
+  if (all(is.na(losses))) {
+    l_counts <- data.frame(KEGG_pathway = character(), lost = numeric())
+  } else {
+    l_counts <- as.data.frame(table(losses))
+    colnames(l_counts) <- c("KEGG_pathway", "lost")
+  }
+  #g_counts <- as.data.frame(table(DATA[NODE,2]))
+  #colnames(g_counts) <- c("GO_term", "gained")
+  #l_counts <- as.data.frame(table(DATA[NODE,3]))
+  #colnames(l_counts) <- c("GO_term", "lost")
+  
+  KEGG_counts <- merge(g_counts, l_counts, by = "KEGG_pathway", all = TRUE)
+  KEGG_counts$KEGG_pathway <- factor(KEGG_counts$KEGG_pathway, levels = KEGG_counts$KEGG_pathway)
+  KEGG_counts$gained <- ifelse(is.na(KEGG_counts$gained), 0, KEGG_counts$gained)
+  KEGG_counts$lost <- ifelse(is.na(KEGG_counts$lost), 0, KEGG_counts$lost)
+  
+  total_gains <- sum(KEGG_counts$gained)
+  total_losses <- sum(KEGG_counts$lost)
+  KEGG_counts$prop_gained <- KEGG_counts$gained / total_gains
+  KEGG_counts$prop_lost <- KEGG_counts$lost / total_losses
+  KEGG_counts$diff <- KEGG_counts$gained - KEGG_counts$lost
+  KEGG_counts$prop_diff <- KEGG_counts$prop_gained - KEGG_counts$prop_lost
+  KEGG_counts$sum <- KEGG_counts$gained + KEGG_counts$lost
+  
+  if(nrow(filter(KEGG_counts, gained != 0)) != 0) {
+    # fishertest: IF EACH GO TERM IS GAINED MORE (fraction wise) IN NODE THAN IN OTHER NODES
+    # a = number of GO_term gains in anthozoa
+    # b = number of other GO terms gained in anthozoa
+    # c = number of GO_term gains in other nodes
+    # d = number of other GO term gains in other nodes 
+    b = as.numeric(length(DATA[[NODE,2]]))
+    all_KEGG_gains <- unlist(DATA$g_KEGG_Pathways, recursive = TRUE)
+    d = as.numeric(length(all_KEGG_gains))
+    all_KEGG_gain_counts <- table(all_KEGG_gains)
+    
+    KEGG_counts <- KEGG_counts %>% rowwise() %>% 
+      mutate(pval_gain = {
+        term <- KEGG_pathway
+        if (term %in% names(all_KEGG_gain_counts)) {
+          a <- gained
+          c <- all_KEGG_gain_counts[[term]]
+          mat <- matrix(c(a, b - a, c, d - c), nrow = 2, byrow = TRUE)
+          fisher.test(mat, alternative = "greater")$p.value
+        } else {
+          1
+        }
+      }) %>% 
+      ungroup()
+    KEGG_counts$padj_gain <- p.adjust(KEGG_counts$pval_gain, method = "bonferroni")
+  }  
+  if(nrow(filter(KEGG_counts, lost != 0)) != 0) {
+    # fishertest: IF EACH GO TERM IS LOST MORE IN NODE THAN IN OTHER NODES
+    # a = number of GO_term losses in anthozoa
+    # b = number of other GO terms lost in anthozoa
+    # c = number of GO_term losses in other nodes
+    # d = number of other GO term losses in other nodes 
+    b = as.numeric(length(DATA[[NODE,3]]))
+    all_KEGG_losses <- unlist(DATA$l_KEGG_Pathways, recursive = TRUE)
+    d = as.numeric(length(all_KEGG_losses))
+    all_KEGG_loss_counts <- table(all_KEGG_losses)
+    
+    KEGG_counts <- KEGG_counts %>% rowwise() %>% 
+      mutate(pval_loss = {
+        term <- KEGG_pathway
+        if (term %in% names(all_KEGG_loss_counts)) {
+          a <- lost
+          c <- all_KEGG_loss_counts[[term]]
+          mat <- matrix(c(a, b - a, c, d - c), nrow = 2, byrow = TRUE)
+          fisher.test(mat, alternative = "greater")$p.value
+        } else {
+          1
+        }
+      }) %>% 
+      ungroup()
+    KEGG_counts$padj_loss <- p.adjust(KEGG_counts$pval_loss, method = "bonferroni")
+  }  
+
+  KEGG_counts <- filter(KEGG_counts, grepl("ko", KEGG_pathway))
+  KEGG_counts <- KEGG_counts %>% mutate(name = sapply(as.character(KEGG_pathway), get_name))
+  
+  return(KEGG_counts)
+}
+
+
+focal_nodes$KEGG_df <- c("anth_KEGG", "anth2_KEGG", "endomed_KEGG", "med_KEGG", "endo_KEGG", "scs_KEGG", "hyd_KEGG", "myx_KEGG", "hex_KEGG", "cer_KEGG", "oct_KEGG", "scler_KEGG", "scyph_KEGG", "cubscyph_KEGG")
+
+```
+
+```{r KEGG_sand_plot, eval=FALSE}
+
+#DATA <- anth_KEGG
+
+KEGG_sand_plot <- function(DATA, TITLE = "") {
+  data <- DATA %>% filter(padj_gain < 0.01 | padj_loss < 0.01) %>% 
+    mutate(gain_col = ifelse(padj_gain < 0.01, "sig_gain", "notsig"),
+           loss_col = ifelse(padj_loss < 0.01, "sig_loss", "notsig")) %>% 
+    arrange(-sum)
+  #data <- data[1:50,]
+  count <-  
+    ggplot(data, aes(y = reorder(name, -sum), x = sum)) + #aes(y = reorder(GO_term, -sum), x = sum)
+      geom_col(aes(x = gained, fill = gain_col)) +    
+      geom_col(aes(x = -lost, fill = loss_col)) +       
+      scale_fill_manual(values = c("sig_gain" = "seagreen", "sig_loss" = "maroon", "notsig" = "grey70")) +
+      labs(x = "Count", y = "KEGG Pathway", title = TITLE) +
+      theme_minimal() +
+      theme(axis.text.y = element_text(size = 3)) +
+      theme(legend.position = "none") +
+      scale_x_continuous(labels = abs) 
+  
+  prop <- 
+    ggplot(data, aes(y = reorder(name, -sum), x = sum)) + #aes(y = reorder(GO_term, -sum), x = sum)
+      geom_col(aes(x = prop_gained, fill = gain_col)) +    
+      geom_col(aes(x = -prop_lost, fill = loss_col)) +       
+      scale_fill_manual(values = c("sig_gain" = "seagreen", "sig_loss" = "maroon", "notsig" = "grey70")) +
+      labs(x = "Proportion of all gains/losses", y = "KEGG Pathway", title = "") +
+      theme_minimal() +
+      theme(axis.text.y = element_blank()) +
+      theme(legend.position = "none") +
+      scale_x_continuous(labels = abs)
+  
+  diff <- 
+    ggplot(data, aes(y = reorder(name, -sum), x = sum)) + #aes(y = reorder(GO_term, -sum), x = sum)
+      geom_col(aes(x = diff), fill = "steelblue") +    
+      geom_col(aes(x = -prop_lost, fill = loss_col)) +
+      labs(x = "gains - losses", y = "KEGG Pathway", title = "") +
+      theme_minimal() +
+      theme(axis.text.y = element_blank()) +
+      theme(legend.position = "none") +
+      scale_x_continuous(labels = abs)
+  
+  plot <- plot_grid(count, prop, diff, nrow = 1)
+  return(plot)
+  
+}
+
+kegg_plots <- list()
+load("kegg_dfs.Rdata")
+for (i in 1:nrow(focal_nodes)) {
+  print(paste("Starting", focal_nodes$node_name[i]))
+  #assign(focal_nodes$KEGG_df[i], KEGG_setup(focal_nodes$node_number[i]))
+  kegg_plots[[i]] <- KEGG_sand_plot(get(focal_nodes$KEGG_df[i]), focal_nodes$node_name[i])
+}
+
+#save(anth_KEGG, anth2_KEGG, endomed_KEGG, med_KEGG, endo_KEGG, scs_KEGG, hyd_KEGG, myx_KEGG, hex_KEGG, cer_KEGG, oct_KEGG, scler_KEGG, scyph_KEGG, cubscyph_KEGG, file="kegg_dfs.Rdata")
+
+pdf("../figures/KEGG_pathways/kegg_sand_plots_all.pdf", width = 8, height = 44)
+plot_grid(plotlist = kegg_plots, ncol = 1)
+dev.off()
+
+```
+
+need to adjust 
+```{r KEGGREST, eval=FALSE}
+library(KEGGREST)
+NODE = 85
+
+get_genes <- function(kegg_pathway) {
+  return(keggGet(kegg_pathway)[[1]]$GENE)
+}
+path <- keggGet("ko04217")[[1]]
+pathways <- KEGG_Pathways[NODE,2]
+pathways <- pathways[[1]][grepl("^ko", pathways[[1]])]
+pathways <- as.data.frame(pathways)
+pathways$kegg_fixed <- sub("^ko", "K", pathways$pathways)
+pathways$genes <- get_genes(pathways$pathways)
+
+get_genes("ko04217")
+pathway <- keggLink("genes", "K04217")
+pathway <- keggGet("hsa04010")
+pathway[[1]]$GENE
+
+
+```
+
+# ------------------------ KEGG_module -------------------
+```{r keggmodule_setup}
+library(KEGGREST)
+KEGG_m_setup <- function(NODE) {
+
+  # take a row of the GOs dataframe and make count tables with each GO term and how many are in gains and losses (may need to do this separately and then cbind)
+  g_counts <- as.data.frame(table(KEGG_Modules[NODE,2]))
+  colnames(g_counts) <- c("KEGG_term", "gained")
+  l_counts <- as.data.frame(table(KEGG_Modules[NODE,3]))
+  colnames(l_counts) <- c("KEGG_term", "lost")
+  
+  KEGG_counts <- merge(g_counts, l_counts, by = "KEGG_term", all = TRUE)
+  KEGG_counts$KEGG_term <- factor(KEGG_counts$KEGG_term, levels = KEGG_counts$KEGG_term)
+  KEGG_counts$gained[is.na(KEGG_counts$gained)] <- 0
+  KEGG_counts$lost[is.na(KEGG_counts$lost)] <- 0
+  
+  total_gains <- sum(KEGG_counts$gained)
+  total_losses <- sum(KEGG_counts$lost)
+  KEGG_counts$prop_gained <- KEGG_counts$gained / total_gains
+  KEGG_counts$prop_lost <- KEGG_counts$lost / total_losses
+  KEGG_counts$diff <- KEGG_counts$gained - KEGG_counts$lost
+  KEGG_counts$prop_diff <- KEGG_counts$prop_gained - KEGG_counts$prop_lost
+  KEGG_counts$sum <- KEGG_counts$gained + KEGG_counts$lost
+  
+  # fishertest: IF EACH GO TERM IS GAINED MORE IN NODE THAN IN OTHER NODES
+  # a = number of GO_term gains in anthozoa
+  # b = number of other GO terms gained in anthozoa
+  # c = number of GO_term gains in other nodes
+  # d = number of other GO term gains in other nodes 
+  b = sum(!is.na(KEGG_Modules[[NODE, 2]]))
+  all_KEGG_gains <- unlist(KEGG_Modules$g_KEGG_Module_list, recursive = TRUE)
+  all_KEGG_gains <- all_KEGG_gains[!is.na(all_KEGG_gains)]
+  d = as.numeric(length(all_KEGG_gains))
+  all_KEGG_gain_counts <- table(all_KEGG_gains) 
+  #all_COG_gain_counts <- all_COG_gain_counts[-23]  
+  
+  KEGG_counts$pval_gain <- apply(KEGG_counts, 1, function(row) {
+    a <- as.numeric(row["gained"])
+    c <- as.numeric(all_KEGG_gain_counts[[row["KEGG_term"]]])
+    mat <- matrix(c(a,b-a,c,d-c),nrow = 2, byrow = TRUE)
+    fisher.test(mat, alternative = "greater")$p.value
+  })
+  KEGG_counts$padj_gain <- p.adjust(KEGG_counts$pval_gain, method = "bonferroni")
+  
+  
+  # fishertest: IF EACH GO TERM IS GAINED MORE IN NODE THAN IN OTHER NODES
+  # a = number of GO_term gains in anthozoa
+  # b = number of other GO terms gained in anthozoa
+  # c = number of GO_term gains in other nodes
+  # d = number of other GO term gains in other nodes 
+  b = sum(!is.na(KEGG_Modules[[NODE, 3]]))
+  all_KEGG_losses <- unlist(KEGG_Modules$l_KEGG_Module_list, recursive = TRUE)
+  all_KEGG_losses <- all_KEGG_losses[!is.na(all_KEGG_losses)]
+  d = as.numeric(length(all_KEGG_losses))
+  all_KEGG_loss_counts <- table(all_KEGG_losses) 
+  
+  KEGG_counts$pval_loss <- apply(KEGG_counts, 1, function(row) {
+    a <- as.numeric(row["gained"])
+    c <- as.numeric(all_KEGG_gain_counts[[row["KEGG_term"]]])
+    mat <- matrix(c(a,b-a,c,d-c),nrow = 2, byrow = TRUE)
+    fisher.test(mat, alternative = "greater")$p.value
+  })
+  KEGG_counts$padj_loss <- p.adjust(KEGG_counts$pval_loss, method = "bonferroni")
+  
+  KEGG_counts$pathway <- lapply(KEGG_counts$KEGG_term, function(m) {
+    tryCatch({
+      keggGet(paste0("md:", m))[[1]]$PATHWAY
+    }, error = function(e) {
+      NA
+    })
+  })
+  return(KEGG_counts)
+}
+```
+
+
+```{r keggmodule_plot}
+KEGG_m_count_plot <- function(DATA, TITLE = NULL) {
+  DATA <- mutate(DATA, gained_fill = ifelse(padj_gain <= 0.01, "sig_gain", "not_gain"), lost_fill = ifelse(padj_gain <= 0.01, "sig_lost", "not_lost")) %>% 
+    filter(padj_gain <= 0.01 | padj_loss <= 0.01)
+  plot <- DATA %>% 
+      ggplot(., aes(y = reorder(KEGG_term, -sum), x = sum)) + #aes(y = reorder(GO_term, -sum), x = sum)
+        geom_col(aes(x = gained, fill = gained_fill)) +
+        geom_col(aes(x = -lost, fill = lost_fill)) +
+        scale_fill_manual(values = c(sig_gain = "seagreen", not_gain = "#CCE5D6", sig_lost = "maroon", not_lost = "#E8C4C4")) +
+        labs(x = "Count", y = "KEGG Pathway", title = TITLE) +
+        theme_minimal() +
+        theme(axis.text.y = element_text(size = 6)) +
+        scale_y_discrete(labels = setNames(DATA$pathway, DATA$KEGG_term)) +
+        scale_x_continuous(labels = abs) +
+        theme(legend.position = "none")
+  return(plot)
+}
+
+KEGG_m_prop_plot <- function(DATA, TITLE = NULL) {
+  DATA <- mutate(DATA, gained_fill = ifelse(padj_gain <= 0.01, "sig_gain", "not_gain"), lost_fill = ifelse(padj_gain <= 0.01, "sig_lost", "not_lost")) %>% 
+    filter(padj_gain <= 0.01 | padj_loss <= 0.01) 
+  plot <- DATA %>% 
+      ggplot(., aes(y = reorder(KEGG_term, -sum), x = sum)) + #aes(y = reorder(GO_term, -sum), x = sum)
+        geom_col(aes(x = prop_gained, fill = gained_fill)) +
+        geom_col(aes(x = -prop_lost, fill = lost_fill)) +
+        scale_fill_manual(values = c(sig_gain = "seagreen", not_gain = "#CCE5D6", sig_lost = "maroon", not_lost = "#E8C4C4")) +
+        labs(x = "Proportion", y = "KEGG Pathway", title = TITLE) +
+        theme_minimal() +
+        theme(axis.text.y = element_blank()) +
+        scale_x_continuous(labels = abs) +
+        theme(legend.position = "none")
+  return(plot)
+}
+
+KEGG_m_diff_plot <- function(DATA, TITLE = NULL) {
+  DATA <- mutate(DATA, gained_fill = ifelse(padj_gain <= 0.01, "sig_gain", "not_gain"), lost_fill = ifelse(padj_gain <= 0.01, "sig_lost", "not_lost")) %>% 
+    filter(padj_gain <= 0.01 | padj_loss <= 0.01) 
+  plot <- DATA %>% 
+      ggplot(., aes(y = reorder(KEGG_term, -sum), x = sum)) + #aes(y = reorder(GO_term, -sum), x = sum)
+        geom_col(aes(x = diff, fill = gained_fill)) +       
+        scale_fill_manual(values = c(sig_gain = "steelblue", not_gain = "#C9D9E6")) +
+        labs(x = "Gained - lost", y = "KEGG Pathway", title = TITLE) +
+        #gghighlight(padj_fisher <= 0.01, label_key = COG_term) +
+        theme_minimal() +
+        theme(axis.text.y = element_blank()) +
+        scale_x_continuous(labels = abs) +
+        theme(legend.position = "none")
+  return(plot)
+}
+
+```
+
+
+```{r kegg_m+plots_by_node}
+anth_KEGG <- KEGG_m_setup(85)
+anth_KEGG <- dplyr::select(anth_KEGG, c(padj_gain, padj_loss, pathway, KEGG_term)) %>% 
+  filter(padj_gain < 0.01 | padj_loss < 0.01)
+write_csv(anth_KEGG, "anth_KEGG_modules.csv")
+
+```
+
+
+# ------------------------ OGDF --------------------------
+
+```{r ogdf, eval=FALSE}
+
+load("../ortho_dollo_2/og4dollo.Rdata")
+gained <- gl[gl[[85]] == "g", 85, drop = FALSE] # finds OGs that were gained in node i
+gained$og <- rownames(gained) 
+gained_ogs <- gained$og # puts it in list form
+gained_df <- as.data.frame(ogdf[, gained_ogs, drop = FALSE])
+gained_df$total <- rowSums(gained_df)
+
+anth_tips <- data.frame(species = rownames(gained_df),
+  gained_total = gained_df$total)
+
+anth_tips <- anth_tips[match(tree$tip.label, anth_tips$species), ] # reorder the species to be the same as tip labels
+
+tree_plot <- ggtree(tree, branch.length = "none") + 
+  geom_tiplab(size = 2.75, align = TRUE) +
+  scale_y_reverse(limits = c(max(tree_data$y) + 0.5, min(tree_data$y) - 0.5), expand = c(0, 0)) +# the tree was upside down without this # the limits shenanigans are to make sure nothing gets cut off, just to add a buffer
+  theme(plot.margin = margin(t = 5, r = 10, b = 26, l = 5)) +
+  coord_cartesian(clip = "off")
+
+# here I am taking the data from the plot itself and then using some chatgpt code to get the tip order from the tree plot
+tree_data <- tree_plot$data
+tip_order <- tree_data %>%
+  dplyr::filter(isTip) %>%
+  dplyr::arrange(desc(y)) %>%
+  dplyr::pull(label)
+
+bar_plot <- ggplot(anth_tips, aes(x = gained_total, y = factor(species, levels = tip_order))) +  # rev is to reverse the species order because i flipped the tree
+  geom_col(fill = "steelblue") +  # vertical bars; geom_col is shorthand for geom_bar(stat="identity")
+  theme_minimal() +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank())+
+  scale_y_discrete(expand = c(0, 0)) +
+  scale_x_continuous(expand = c(0, 0)) + # to make it start right at 0
+  theme(plot.margin = margin(l = 30, b = 2, t = 6))+
+  xlab("OGs gained at Anthozoan ancestor present at tip")
+print(bar_plot)
+print(tree_plot)
+
+pdf("../figures/anth_gains_tips.pdf", height = 8, width = 12)
+caption <- ggdraw() + draw_label(
+  "Left: Cnidarian phylogenetic tree; right: the number of orthogroups that were gained in the ancesotr to anthozoans that are present in the tips. Idea: add pies in the anthozoan\t
+  half of the tree: the anth pie will be the normal COG pie that was at anthozoans, and then the pies after would be like what is still present. Having pie sizes would also be good.\t
+  I want to see if the OGs that are present in the genuses with a lot present are the same. So maybe I could color one blue (maybe  gorgonia) aand then color those ogs in the other\t
+  bars blue to but the other ones pink or red", x = 0, hjust = 0, size = 10)
+plot <- plot_grid(tree_plot, bar_plot, nrow = 1, align = "v", axis = "tblr", rel_widths = c(2, 1))
+plot_grid(ncol = 1, plot, caption, rel_heights = c(10, 1))
+
+dev.off()
+```
+
+

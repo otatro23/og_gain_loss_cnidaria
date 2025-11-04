@@ -1,0 +1,963 @@
+---
+title: "deepfri_analysis"
+output: html_document
+---
+
+```{r import}
+library(this.path)
+setwd(this.dir())
+library(ggtree)
+library(tidyverse)
+library(cowplot)
+library(grid)
+
+load("deepfri.Rdata")
+print("deepfri loaded")
+bp <- bp %>% rename(GO = GO_term.EC_number, name = GO_term.EC_number.name)
+cc <- cc %>% rename(GO = GO_term.EC_number, name = GO_term.EC_number.name)
+mf <- mf %>% rename(GO = GO_term.EC_number, name = GO_term.EC_number.name)
+
+focal_nodes <- data.frame(
+  node_name = c("anth", "anth2", "endomed", "med", "endo", "scs", "hyd", "myx", "hex", "cer", "oct"),
+  node_name_full = c("Anthozoa", "Anthozoa2", "Endocnidozoa_Medusozoa", "Medusozoa", "Endocnidozoa", "Staurozoa_Cubozoa_Scyphozoa", "Hydrozoa", "Myxozoa", "Hexacorallia", "Ceriantheria", "Octocorallia"),
+  GO_df = c("anth_GO", "anth2_GO", "endomed_GO", "med_GO", "endo_GO", "scs_GO", "hyd_GO", "myx_GO", "hex_GO", "cer_GO", "oct_GO"),
+  node_number = c(86, 87 ,84 ,83 ,129, 132, 82, 130, 88, 113, 117)
+  )
+
+
+load("../orthodollo/tree.Rds")
+tree <- tr1
+rm(tr1)
+
+load("../orthodollo/loss_gain_pres_abs_H1.Rds")
+gl <- lossgain.table
+rm(lossgain.table)
+
+```
+
+Data manip to get the df into the same format as eggnog: 
+ - node
+ - gained GO terms (comma separated)
+ - lost GO terms (comma separated)
+```{r setup}
+
+gl <- as.data.frame(t(gl))
+colnames(gl) <- as.character(1:ncol(gl))
+gl$og <- rownames(gl)
+print("gl prepped")
+
+bp_OG_GO <- bp %>% mutate(og = sub("_.*", "", Protein)) %>% 
+  dplyr::select(og, GO) %>% 
+  group_by(og) %>% 
+  summarize(GOs = paste(GO, collapse = ","), .groups = "drop")
+print("bp collapsed")
+
+cc_OG_GO <- cc %>% mutate(og = sub("_.*", "", Protein)) %>% 
+  dplyr::select(og, GO) %>% 
+  group_by(og) %>% 
+  summarize(GOs = paste(GO, collapse = ","), .groups = "drop")
+print("cc collapsed")
+
+mf_OG_GO <- mf %>% mutate(og = sub("_.*", "", Protein)) %>% 
+  dplyr::select(og, GO) %>% 
+  group_by(og) %>% 
+  summarize(GOs = paste(GO, collapse = ","), .groups = "drop")
+print("mf collapsed")
+
+bp_GOs <- data.frame(node = character(), g_GOs = vector(), l_GOs = vector())
+cc_GOs <- data.frame(node = character(), g_GOs = vector(), l_GOs = vector())
+mf_GOs <- data.frame(node = character(), g_GOs = vector(), l_GOs = vector())
+
+for (NODE in 1:151) {
+  print(paste("starting node: ", NODE))
+
+  gained <- gl[gl[[NODE]] == "g", NODE, drop = FALSE] 
+  gained$og <- rownames(gained) 
+  lost <- gl[gl[[NODE]] == "l", NODE, drop = FALSE] 
+  lost$og <- rownames(lost) 
+  
+  #bp
+  gained_GOs <- merge(bp_OG_GO, gained) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
+    summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
+  lost_GOs <- merge(bp_OG_GO, lost) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
+    summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
+  
+  bp_GOs <- rbind(bp_GOs, data.frame(node = NODE, g_GOs = I(list(strsplit(gained_GOs$GOs[1], ",")[[1]])), l_GOs = I(list(strsplit(lost_GOs$GOs[1], ",")[[1]]))))
+  
+  #cc
+  gained_GOs <- merge(cc_OG_GO, gained) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
+    summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
+  lost_GOs <- merge(cc_OG_GO, lost) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
+    summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
+  cc_GOs <- rbind(cc_GOs, data.frame(node = NODE, g_GOs = I(list(strsplit(gained_GOs$GOs[1], ",")[[1]])), l_GOs = I(list(strsplit(lost_GOs$GOs[1], ",")[[1]]))))
+  
+  #mf
+  gained_GOs <- merge(mf_OG_GO, gained) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
+    summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
+  lost_GOs <- merge(mf_OG_GO, lost) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
+    summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
+  mf_GOs <- rbind(mf_GOs, data.frame(node = NODE, g_GOs = I(list(strsplit(gained_GOs$GOs[1], ",")[[1]])), l_GOs = I(list(strsplit(lost_GOs$GOs[1], ",")[[1]]))))
+}
+print("setup done")
+```
+
+```{r GO_setup}
+
+GO_setup <- function(DATA, NODE) {
+  
+  gains <- DATA$g_GOs[[NODE]]
+  losses <- DATA$l_GOs[[NODE]]
+  
+  # take a row of the GOs dataframe and make count tables with each GO term and how many are in gains and losses (may need to do this separately and then cbind)
+  if (all(is.na(gains))) {
+    g_counts <- data.frame(GO_term = character(), gained = numeric())
+  } else {
+    g_counts <- as.data.frame(table(gains))
+    colnames(g_counts) <- c("GO_term", "gained")
+  }
+
+  if (all(is.na(losses))) {
+    l_counts <- data.frame(GO_term = character(), lost = numeric())
+  } else {
+    l_counts <- as.data.frame(table(losses))
+    colnames(l_counts) <- c("GO_term", "lost")
+  }
+  #g_counts <- as.data.frame(table(DATA[NODE,2]))
+  #colnames(g_counts) <- c("GO_term", "gained")
+  #l_counts <- as.data.frame(table(DATA[NODE,3]))
+  #colnames(l_counts) <- c("GO_term", "lost")
+  
+  GO_counts <- merge(g_counts, l_counts, by = "GO_term", all = TRUE)
+  GO_counts$GO_term <- factor(GO_counts$GO_term, levels = GO_counts$GO_term)
+  GO_counts$gained <- ifelse(is.na(GO_counts$gained), 0, GO_counts$gained)
+  GO_counts$lost <- ifelse(is.na(GO_counts$lost), 0, GO_counts$lost)
+  
+  total_gains <- sum(GO_counts$gained)
+  total_losses <- sum(GO_counts$lost)
+  GO_counts$prop_gained <- GO_counts$gained / total_gains
+  GO_counts$prop_lost <- GO_counts$lost / total_losses
+  GO_counts$diff <- GO_counts$gained - GO_counts$lost
+  GO_counts$prop_diff <- GO_counts$prop_gained - GO_counts$prop_lost
+  GO_counts$sum <- GO_counts$gained + GO_counts$lost
+  
+  if(nrow(filter(GO_counts, gained != 0)) != 0) {
+    # fishertest: IF EACH GO TERM IS GAINED MORE IN NODE THAN IN OTHER NODES
+    # a = number of GO_term gains in anthozoa
+    # b = number of other GO terms gained in anthozoa
+    # c = number of GO_term gains in other nodes
+    # d = number of other GO term gains in other nodes 
+    b = as.numeric(length(DATA[[NODE,2]]))
+    all_GO_gains <- unlist(DATA$g_GOs, recursive = TRUE)
+    d = as.numeric(length(all_GO_gains))
+    all_GO_gain_counts <- table(all_GO_gains)
+    
+    GO_counts$pval_gain <- apply(GO_counts, 1, function(row) {
+      a <- as.numeric(row["gained"])
+      c <- as.numeric(all_GO_gain_counts[[row["GO_term"]]])
+      mat <- matrix(c(a,b-a,c,d-c),nrow = 2, byrow = TRUE)
+      fisher.test(mat, alternative = "greater")$p.value
+    })
+    GO_counts$padj_gain <- p.adjust(GO_counts$pval_gain, method = "bonferroni")
+  }  
+  if(nrow(filter(GO_counts, lost != 0)) != 0) {
+    # fishertest: IF EACH GO TERM IS LOST MORE IN NODE THAN IN OTHER NODES
+    # a = number of GO_term losses in anthozoa
+    # b = number of other GO terms lost in anthozoa
+    # c = number of GO_term losses in other nodes
+    # d = number of other GO term losses in other nodes 
+    b = as.numeric(length(DATA[[NODE,3]]))
+    all_GO_losses <- unlist(DATA$l_GOs, recursive = TRUE)
+    d = as.numeric(length(all_GO_losses))
+    all_GO_loss_counts <- table(all_GO_losses)
+    
+    GO_counts$pval_loss <- apply(GO_counts, 1, function(row) {
+      a <- as.numeric(row["lost"])
+      c <- as.numeric(all_GO_loss_counts[[row["GO_term"]]])
+      mat <- matrix(c(a,b-a,c,d-c),nrow = 2, byrow = TRUE)
+      fisher.test(mat, alternative = "greater")$p.value
+    })
+    GO_counts$padj_loss <- p.adjust(GO_counts$pval_loss, method = "bonferroni")
+  }
+  
+  
+  return(GO_counts)
+}
+print("GO setup initialized")
+
+```
+
+```{r GO_figure_tsvs, eval=FALSE}
+
+process <- function(NODE, DIR) {
+  dir.create(DIR)
+  GO_df <- GO_setup(bp_GOs, NODE)
+  if(nrow(filter(GO_df, gained != 0)) == 0){
+    print(paste("No BP gains in node: ", NODE))
+  } else {
+    gain <- GO_df %>% 
+      dplyr::select(c("GO_term", "padj_gain")) %>% 
+      #filter(padj_gain <= 0.01) %>% 
+      mutate(padj_gain = if_else(padj_gain == 0, 1e-300, padj_gain))
+    write_tsv(gain, file.path(DIR, "BP_gain.tsv"), col_names = FALSE)
+  }
+  if(nrow(filter(GO_df, lost != 0)) == 0){
+    print(paste("No BP losses in node: ", NODE))
+  } else {
+    loss <- GO_df %>% 
+      dplyr::select(c("GO_term", "padj_loss")) %>% 
+      #filter(padj_loss <= 0.01) %>% 
+      mutate(padj_loss = if_else(padj_loss == 0, 1e-300, padj_loss))
+    write_tsv(loss, file.path(DIR, "BP_loss.tsv"), col_names = FALSE)
+  }
+  
+  GO_df <- GO_setup(cc_GOs, NODE)
+  if(nrow(filter(GO_df, gained != 0)) == 0){
+    print(paste("No CC gains in node: ", NODE))
+  } else {
+    gain <- GO_df %>% 
+      dplyr::select(c("GO_term", "padj_gain")) %>% 
+      #filter(padj_gain <= 0.01) %>% 
+      mutate(padj_gain = if_else(padj_gain == 0, 1e-300, padj_gain))
+    write_tsv(gain, file.path(DIR, "CC_gain.tsv"), col_names = FALSE)
+  }
+  if(nrow(filter(GO_df, lost != 0)) == 0){
+    print(paste("No CC losses in node: ", NODE))
+  } else {
+    loss <- GO_df %>% 
+      dplyr::select(c("GO_term", "padj_loss")) %>% 
+      #filter(padj_loss <= 0.01) %>% 
+      mutate(padj_loss = if_else(padj_loss == 0, 1e-300, padj_loss))
+    write_tsv(loss, file.path(DIR, "CC_loss.tsv"), col_names = FALSE)
+  }
+  
+  GO_df <- GO_setup(mf_GOs, NODE)
+  if(nrow(filter(GO_df, gained != 0)) == 0){
+    print(paste("No MF gains in node: ", NODE))
+  } else {
+    gain <- GO_df %>% 
+      dplyr::select(c("GO_term", "padj_gain")) %>% 
+      #filter(padj_gain <= 0.01) %>% 
+      mutate(padj_gain = if_else(padj_gain == 0, 1e-300, padj_gain))
+    write_tsv(gain, file.path(DIR, "MF_gain.tsv"), col_names = FALSE)
+  }
+  if(nrow(filter(GO_df, lost != 0)) == 0){
+    print(paste("No MF losses in node: ", NODE))
+  } else {
+    loss <- GO_df %>% 
+      dplyr::select(c("GO_term", "padj_loss")) %>% 
+      #filter(padj_loss <= 0.01) %>% 
+      mutate(padj_loss = if_else(padj_loss == 0, 1e-300, padj_loss))
+    write_tsv(loss, file.path(DIR, "MF_loss.tsv"), col_names = FALSE)
+  }
+}
+print("process initialized")
+
+# Basal nodes 
+print("processing node 86")
+process(86, "./go_figure_tsvs/anth") # anthozoa 
+print("processing node 87")
+process(87, "./go_figure_tsvs/anth2") # anthozoa2 (hexacorals and ceriantheria)
+print("processing node 84")
+process(84, "./go_figure_tsvs/endomed") # endocnidozoa and medusozoa
+print("processing node 83")
+process(83, "./go_figure_tsvs/med") # medusazoa
+print("processing node 129")
+process(129, "./go_figure_tsvs/endo") # endocnidozoa
+
+# clade gains/losses
+print("processing node 130")
+process(130, "./go_figure_tsvs/myx") # myxozoa
+print("processing node 82")
+process(82, "./go_figure_tsvs/hyd") # hydrozoa
+print("processing node 132")
+process(132, "./go_figure_tsvs/scs") # ancestor of staurozoa, cubozoa, and scyphozoa (scs)
+print("processing node 117")
+process(117, "./go_figure_tsvs/oct") # octocorallia
+print("processing node 113")
+process(113, "./go_figure_tsvs/cer") # ceriantheria
+print("processing node 88")
+process(88, "./go_figure_tsvs/hex") #hexacorallia
+
+
+```
+
+
+```{r GO_figure_replot, message=FALSE, warning=FALSE, eval = FALSE}
+library(ggforce)
+library(dplyr)
+library(readr)
+library(this.path)
+setwd(this.dir())
+library(cowplot)
+
+
+focal_nodes <- data.frame(node_number = c(132, 133, 103, 104, 129, 130, 105, 116, 163, 159, 134, 137, 120, 108, 102), node_name = c("anth", "anth2", "endomed", "med", "endo", "myx", "hyd", "acr", "oct", "cer", "hex", "scler", "scyph", "siph", "cnid"))
+
+
+
+dir <- "/Users/oliviatatro/Downloads/surf/deepfri/go_figure_tsvs50"
+
+named_colors <- c(`Other / Unclassified` = "grey25",
+                  `Behavior, Movement, & Environmental Response` = "firebrick4", 
+                  `Cell Communication & Signaling` = "#994C00", 
+                  `Cell Cycle & Division` = "#666600",
+                  `Cellular Transport & Localization` = "#006633",
+                  `Development & Morphogenesis` = "#006666",
+                  `Gene Expression & Regulation` = "#003366",
+                  `Immune & Defense Response` = "#4B0082",
+                  `Metabolism & Biosynthesis` = "violetred4",
+                  `Cytoplasm & Cytosol` = "red",
+                  `Cytoskeleton & Cell Junctions` = "chocolate1",
+                  `Endomembrane System & Vesicles` = "#C4FF3B",
+                  `Extracellular Region & Matrix` = "green3",
+                  `Membrane-Bound Organelles` = "turquoise3",
+                  `Nucleus & Chromatin` = "dodgerblue3",
+                  `Plasma Membrane & Cell Periphery` = "darkviolet",
+                  `Synapse & Specialized Structure` = "#FF3BC4",
+                  `Binding (Small Molecule, Ion, Cofactor)` = "#FF9999",
+                  `Catalytic Activity` = "#FFB266",
+                  `Molecular Adaptors & Modulators` = "#FFFF99",
+                  `Motor & Mechanical Activity` = "darkolivegreen2",
+                  `Signal Transduction Activity` = "#99FFCC",
+                  `Structural Molecule Activity` = "#99CCFF",
+                  `Transcription Regulator Activity` = "#CC99FF",
+                  `Transporter Activity` = "#FF99CC")
+
+# PLOT FUNCTION ----------------------------------------------------------------
+#DOTS <- file.path(dir, paste0(focal_nodes$node_name[1], "_gain"), paste0("biological_process_output_", focal_nodes$node_name[1], "_gain.tsv"))
+#CATS <- "/Users/oliviatatro/Downloads/surf/eggnog/go_figure/BP_classified.csv" 
+#TITLE <- "anth"
+
+
+bp_cats <- read.table("/Users/oliviatatro/Downloads/surf/GO_classifications/BP_categorized.tsv", sep = "\t", header = TRUE)
+cc_cats <- read.table("/Users/oliviatatro/Downloads/surf/GO_classifications/CC_categorized.tsv", sep = "\t", header = TRUE)
+mf_cats <- read.table("/Users/oliviatatro/Downloads/surf/GO_classifications/MF_categorized.tsv", sep = "\t", header = TRUE)
+
+TITLE <- "test"
+transform <- function(num) {
+  return((-log10(num)/300)^(1/2)) # range: 0 to 1
+}
+ROW <- 1
+
+gofigure_data <- data.frame(description = character(), x = numeric(), y = numeric(), pval = numeric(), category = character(), size = numeric(), node = character(), event = character())
+
+ontologies <- data.frame(full = c("biological_process_", "cellular_component_", "molecular_function_"), abr = c("bp", "cc", "mf"), file = c("bp_cats", "cc_cats", "mf_cats"))
+
+for (row in 1:nrow(focal_nodes)) {
+  for (ont in 1:nrow(ontologies)) {
+    for (event in c("gain", "loss")) {
+      filepath <- file.path(dir, focal_nodes$node_name[row], event, paste0(ontologies$full[ont], "go_figure_tsvs50_", focal_nodes$node_name[row], "_", event, ".tsv"))
+      if (file.exists(filepath)) {
+        dots <- as.data.frame(read_tsv(filepath)) %>% 
+          merge(get(ontologies$file[ont]), by = "description") %>% 
+          mutate(node = focal_nodes$node_name[row], event = event, ontology = ontologies$abr[ont]) %>% 
+          dplyr::select(c(description, x, y, pval, user, category, node, event, ontology)) %>%
+          dplyr::rename(size = "user")
+        gofigure_data <- rbind(gofigure_data, dots)
+      }
+    }
+  }
+}
+
+NODE = "anth"
+EVENT = "gain"
+
+gofigureplot <- function(NODE, EVENT, DATA) {
+  dots <- DATA %>% filter(node == NODE, event == EVENT) 
+  plot <- ggplot() +
+    geom_circle(data = filter(dots, pval >= 0.01), aes(x0 = x, y0 = y, r = log(size)/30, fill = I("grey70"), col = I("grey70")), stroke = 0.1, alpha = 0.3) +
+    geom_circle(data = filter(dots, pval < 0.01), aes(x0 = x, y0 = y, r = log(size)/30, fill = category, col = category), stroke = 0.1, alpha = 0.7) +
+    ggtitle(paste(NODE, EVENT)) +
+    scale_fill_manual(values = named_colors) +
+    scale_color_manual(values = named_colors) +
+    scale_x_continuous(limits = c(-2,2)) +
+    scale_y_continuous(limits = c(-2,2)) +
+    theme_void() +
+    theme(legend.position = "none",
+          axis.title = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+          plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt"))
+  return(plot) 
+}
+
+plots <- list()
+
+#gofigureplot("anth", "gain", gofigure_data)
+for (node in focal_nodes$node_name) {
+  for (event in c("gain", "loss")) {
+    print(paste(node, event))
+    plots[[paste(node, event)]] <- gofigureplot(node, event, gofigure_data)
+  }
+}
+
+
+# LEGEND ----
+categories <- names(named_colors)
+dots <- data.frame(description = paste0("des_", seq_along(categories)), x = 1, y = seq_along(categories) * 2, size = 0.88, pval = 1, category = factor(categories, levels = categories))
+legend_dots <- 
+  ggplot(dots) +
+  geom_circle(aes(x0 = x, y0 = y, r = size, fill = category, col = category), alpha = 0.7) +
+  scale_fill_manual(values = named_colors) + #, guide = guide_legend(ncol = 1)
+  scale_color_manual(values = named_colors) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_x_continuous(limits = c(0,2)) +
+  scale_y_continuous(limits = c(1,51))
+legend_text <- 
+  ggplot(dots) +
+  geom_text(aes(y = y, label = category), x = 0, hjust = 0, cex = 3) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_x_continuous(limits = c(0,1.05)) +
+  scale_y_continuous(limits = c(1,51))
+legend <- plot_grid(legend_dots, legend_text, nrow = 1, rel_widths = c(0.5, 4.5))
+
+pdf("../figures/deepfri_go_50_24.pdf", width = 22, height = 15)
+
+bubbles <- plot_grid(plotlist = plots, nrow = 5)
+fig <- plot_grid(bubbles, legend, rel_widths = c(18,4))
+print(fig)
+
+dev.off()
+```
+
+
+
+
+```{r GO_figure_replot, message=FALSE, warning=FALSE}
+library(ggforce)
+library(dplyr)
+library(readr)
+library(this.path)
+setwd(this.dir())
+library(cowplot)
+
+focal_nodes <- data.frame(node_number = c(132, 133, 103, 104, 129, 130, 105, 116, 163, 159, 134, 137, 120, 108, 102), node_name = c("anth", "anth2", "endomed", "med", "endo", "myx", "hyd", "acr", "oct", "cer", "hex", "scler", "scyph", "siph", "cnid"))
+
+dir <- "/Users/oliviatatro/Downloads/surf/deepfri/go_figure_tsvs50"
+
+named_colors <- c(`Behavior and Movement` = "#dcbeff", 
+                  `Cell Communication and Signaling` = "#9A6324", 
+                  `Cell Cycle and Division` = "#ffe119",
+                  `Development` = "#006666",
+                  `Gene Expression and Regulation` = "#e6194B",
+                  `Immune Response` = "#911eb4",
+                  `Metabolism` = "#800000",
+                  `Response to Stress and Stimuli` = "#4363d8",
+                  `Nutrient Uptake and Exchange` = "#f58231",
+                  `Energy Production and Conversion` = "#3cb44b",
+                  `Homeostasis` = "#42d4f4",
+                  `Structural Organization and Cytoskeleton` = "#aaffc3",
+                  `Reproduction` = "#ffd8b1",
+                  `Nervous Systen Processes` = "hotpink2", 
+                  `Cellular Transport and Localization` = "#000075")
+
+
+
+
+
+# PLOT FUNCTION ----------------------------------------------------------------
+#DOTS <- file.path(dir, paste0(focal_nodes$node_name[1], "_gain"), paste0("biological_process_output_", focal_nodes$node_name[1], "_gain.tsv"))
+#CATS <- "/Users/oliviatatro/Downloads/surf/eggnog/go_figure/BP_classified.csv" 
+#TITLE <- "anth"
+
+
+cats <- read.csv("/Users/oliviatatro/Downloads/surf/GO_classifications/categories.csv")
+
+gofigure_data <- data.frame(description = character(), x = numeric(), y = numeric(), pval = numeric(), category = character(), size = numeric(), node = character(), event = character(), members = character())
+
+ontologies <- data.frame(full = c("biological_process_", "cellular_component_", "molecular_function_"), abr = c("bp", "cc", "mf"))
+
+for (row in 1:nrow(focal_nodes)) {
+  for (ont in 1:nrow(ontologies)) {
+    for (event in c("gain", "loss")) {
+      filepath <- file.path(dir, focal_nodes$node_name[row], event, paste0(ontologies$full[ont], "go_figure_tsvs50_", focal_nodes$node_name[row], "_", event, ".tsv"))
+      if (file.exists(filepath)) {
+        dots <- as.data.frame(read_tsv(filepath)) %>% 
+          merge(cats, by = "description") %>% 
+          mutate(node = focal_nodes$node_name[row], event = event, ontology = ontologies$abr[ont]) %>% 
+          dplyr::select(c(description, x, y, pval, user, category, node, event, ontology, members)) %>%
+          dplyr::rename(size = "user")
+        gofigure_data <- rbind(gofigure_data, dots)
+      }
+    }
+  }
+}
+
+go_des <- gofigure_data %>% select(c(description, category, members)) %>% separate_rows(members, sep = ", ") %>% 
+  mutate(members = gsub("'", "", members)) %>% 
+  mutate(members = gsub("\\[", "", members)) %>% 
+  mutate(members = gsub("\\]", "", members)) %>% 
+  unique()
+  
+write.table(go_des, file="go_term_descriptions.tsv", row.names = FALSE, quote = TRUE, sep = "\t")
+
+
+unique(sort(gofigure_data$category))
+
+gofigureplot <- function(NODE, EVENT, DATA) {
+  dots <- DATA %>% filter(node == NODE, event == EVENT) 
+  plot <- ggplot() +
+    geom_circle(data = filter(dots, pval >= 0.01), aes(x0 = x, y0 = y, r = log(size)/30, fill = I("grey70"), col = I("grey70")), stroke = 0.1, alpha = 0.3) +
+    geom_circle(data = filter(dots, pval < 0.01), aes(x0 = x, y0 = y, r = log(size)/30, fill = category, col = category), stroke = 0.1, alpha = 0.7) +
+    ggtitle(paste(NODE, EVENT)) +
+    scale_fill_manual(values = named_colors) +
+    scale_color_manual(values = named_colors) +
+    scale_x_continuous(limits = c(-2.5,2.5)) +
+    scale_y_continuous(limits = c(-2.5,2.5)) +
+    theme_void() +
+    theme(legend.position = "none",
+          axis.title = element_blank(),
+          panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+          plot.margin = margin(t = 10, r = 10, b = 10, l = 10, unit = "pt"))
+  return(plot) 
+}
+
+plots <- list()
+
+#gofigureplot("anth", "gain", gofigure_data)
+for (node in focal_nodes$node_name) {
+  for (event in c("gain", "loss")) {
+    print(paste(node, event))
+    plots[[paste(node, event)]] <- gofigureplot(node, event, gofigure_data)
+  }
+}
+
+
+# LEGEND ----
+categories <- names(named_colors)
+dots <- data.frame(description = paste0("des_", seq_along(categories)), x = 1, y = seq_along(categories) * 2, size = 0.88, pval = 1, category = factor(categories, levels = categories))
+legend_dots <- 
+  ggplot(dots) +
+  geom_circle(aes(x0 = x, y0 = y, r = size, fill = category, col = category), alpha = 0.7) +
+  scale_fill_manual(values = named_colors) + #, guide = guide_legend(ncol = 1)
+  scale_color_manual(values = named_colors) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_x_continuous(limits = c(0,2)) +
+  scale_y_continuous(limits = c(1,51))
+legend_text <- 
+  ggplot(dots) +
+  geom_text(aes(y = y, label = category), x = 0, hjust = 0, cex = 3) +
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_x_continuous(limits = c(0,1.05)) +
+  scale_y_continuous(limits = c(1,51))
+legend <- plot_grid(legend_dots, legend_text, nrow = 1, rel_widths = c(0.5, 4.5))
+
+#pdf("../figures/deepfri_go_50.pdf", width = 22, height = 15)
+
+bubbles <- plot_grid(plotlist = plots, nrow = 5)
+fig <- plot_grid(bubbles, legend, rel_widths = c(18,4))
+print(fig)
+
+#dev.off()
+```
+
+```{r go_cluster_enrichment}
+# group and sum the go data so that each row has a node, gain/loss, category, and the total count of annotations
+clusters <- gofigure_data %>% 
+  group_by(node, event, category) %>% 
+  summarize(sum_size = sum(size))
+
+# fishertest: IF EACH GO CATEGORY IS GAINED/LOST MORE IN THIS NODE THAN IN OTHER NODES
+    # a = number of category gains in thisnode
+    # b = number of other category gained in thisnode
+    # c = number of category gains in other nodes
+    # d = number of other category gains in other nodes 
+clusters$pval <- NA
+
+for (i in 1:nrow(clusters)) {
+  print(i)
+  this_node = clusters$node[i]
+  this_event = clusters$event[i]
+  this_category = clusters$category[i]
+  
+  b_total <- sum(filter(clusters, node == this_node, event == this_event)$sum_size)
+  d_total <- sum(filter(clusters, event == this_event)$sum_size)
+  # cnid metabolic gains
+  a <- filter(clusters, node == this_node, event == this_event, category == this_category)$sum_size[1]
+  # cnid gains that are NOT metabolic
+  b <- b_total - a
+  # metabolic gains from all nodes except cnid 
+  c <- sum(filter(clusters, event == this_event, category == this_category)$sum_size) - a
+  # gains that are not metabolic and not in the cnid node
+  d <- d_total - a - b -c
+  mat <- matrix(c(a,b,c,d),nrow = 2, byrow = TRUE)
+  p <- fisher.test(mat, alternative = "greater")$p.value
+  
+  clusters$pval[i] <- p 
+  
+}
+
+clusters$padj <- p.adjust(clusters$pval, method = "bonferroni")
+
+# create a named vector of the categories and the x value I am assigning 
+category_nums <- c(`Behavior and Movement` = 1, 
+                  `Cell Communication and Signaling` = 2, 
+                  `Cell Cycle and Division` = 3,
+                  `Development` = 4,
+                  `Gene Expression and Regulation` = 5,
+                  `Immune Response` = 6,
+                  `Metabolism` = 7,
+                  `Response to Stress and Stimuli` = 8,
+                  `Nutrient Uptake and Exchange` = 9,
+                  `Energy Production and Conversion` = 10,
+                  `Homeostasis` = 11,
+                  `Structural Organization and Cytoskeleton` = 12,
+                  `Reproduction` = 13, 
+                  `Nervous Systen Processes` = 14, 
+                  `Cellular Transport and Localization` = 15)
+
+# assign the number value of the category to a new column in clusters df called x
+clusters$x <- category_nums[clusters$category]
+# create a new column that is the same as sumsize if it is significant, but otherwise it is just 0
+clusters$sig_bar <- ifelse(clusters$padj < 0.01, clusters$sum_size, 0)
+# invert to make the losses below x axis
+clusters$sig_bar <- ifelse(clusters$event == "loss", -1 * clusters$sig_bar, clusters$sig_bar)
+clusters$bar <- ifelse(clusters$event == "loss", -1 * clusters$sum_size, clusters$sum_size)
+# plot the grey and then plot the color in two separate geom_bars
+
+colnames(clusters) # "node"     "event"    "category" "sum_size" "pval"     "padj"     "x"        "sig_bar" 
+
+pdf("../figures/GO_cluster_enrichment_by_category.pdf", width = 12, height = 8)
+ggplot(data = clusters) +
+  geom_bar(aes(x = node, y = bar/1000000), stat = "identity", fill = "grey70", size = 0.01, width = 0.9) +
+  geom_bar(aes(x = node, y = sig_bar/1000000, fill = category), size = 0.01, stat = "identity", width = 0.9) +
+  scale_fill_manual(values = named_colors) +
+  ylab("Number of centroids (Millions)") +
+  xlab("GO cluster category") +
+  facet_wrap(~ category, scales = "free_y", ncol = 3) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 8))
+dev.off()
+
+pdf("../figures/GO_cluster_enrichment_by_node.pdf", width = 12, height = 8)
+ggplot(data = clusters) +
+  geom_bar(aes(x = x, y = bar/1000000), stat = "identity", fill = "grey70", size = 0.01, width = 0.9) +
+  geom_bar(aes(x = x, y = sig_bar/1000000, fill = category), size = 0.01, stat = "identity", width = 0.9) +
+  scale_fill_manual(values = named_colors) +
+  ylab("Number of centroids (Millions)") +
+  xlab("GO cluster category") +
+  facet_wrap(~ node, scales = "free_y", ncol = 3) +
+  theme_bw() 
+dev.off()
+
+# [1] "Behavior and Movement"                    "Cell Communication and Signaling"        
+# [3] "Cell Cycle and Division"                  "Cellular Transport and Localization"     
+# [5] "Development"                              "Energy Production and Conversion"        
+# [7] "Gene Expression and Regulation"           "Homeostasis"                             
+# [9] "Immune Response"                          "Metabolism"                              
+#[11] "Nutrient Uptake and Exchange"             "Response to Stress and Stimuli"          
+#[13] "Structural Organization and Cytoskeleton"
+test <- filter(gofigure_data, node == "endo", category == "Structural Organization and Cytoskeleton")
+
+```
+
+#NOT WORKING YET
+```{r go_enrichment_tree}
+
+# GAIN ----------------------------------------------------------------------
+library(tidyr)
+test <- clusters %>% filter(event == "gain") %>% ungroup() %>% 
+  select(node, sig_bar, category) %>% 
+  pivot_wider(names_from = category, values_from = sig_bar, values_fill = 0)
+
+COG_matrix <- COG_matrix[,order(colnames(COG_matrix))]
+COG_matrix <- COG_matrix[,-c(23)] #remove X 
+
+pie_sizes <- rowSums(COG_matrix)
+pie_sizes[151] <- 0 #Setting myriazoa  to 0
+pie_sizes[127] <- 0 #Setting planulazoa  to 0
+pie_sizes[85] <- 0 #Setting cnidaria  to 0
+pie_sizes <- pie_sizes[-(1:76)]
+pie_sizes <- pie_sizes^(1/2)
+pie_sizes <- pie_sizes / max(pie_sizes) *2.5
+
+for (i in 77:151) {
+  print(i)
+  df <- COG_setup(i) %>% 
+    filter(padj_gain < 0.01)
+  for (cog in colnames(COG_matrix)) {
+    if (!(cog %in% df$COG_term)) {
+      COG_matrix[i, cog] <- 0
+    }
+  }
+}
+
+COG_matrix <- COG_matrix / rowSums(COG_matrix)
+COG_matrix <- as.matrix(COG_matrix)
+
+# the original cog_matrix did not work properly because a bunch of the pies were one color, but this manually matches the internal nodes to the rows in COG_matrix
+internal_nodes <- as.character((Ntip(tree) + 1):(Ntip(tree) + Nnode(tree)))
+COG_matrix_ordered <- COG_matrix[internal_nodes, ]
+
+pdf("../figures/COGs/g_COG_tree_piesizes.pdf", width = 8, height = 8)
+plot(tree, cex = 0.5) ; nodelabels(pie = COG_matrix_ordered,
+           node = as.numeric(rownames(COG_matrix_ordered)),
+           piecol = cog_colors,
+           cex = pie_sizes[rownames(COG_matrix_ordered)]) ; legend(x = 1.2, y = 50, legend = cog_labels, fill = cog_colors, ncol = 1, cex = 0.6)
+#plot(tree, cex = 0.5, no.margin = TRUE) ;nodelabels()
+dev.off()
+
+plot(tree, cex = 0.5)
+nodelabels()
+
+# LOSS ----------------------------------------------------------------------
+
+for (NODE in 1:151) {
+  if (is.null(COGs[[NODE,3]])){
+    COGs[NODE,3] <- c("X")
+  }
+}
+
+#make the COG matrix with each cog category being a column and the nodes beign the rows 
+COG_matrix <- COGs %>%
+  dplyr::select(-g_COGs) %>% 
+  unnest(l_COGs) %>%
+  group_by(node, l_COGs) %>%
+  summarize(count = n(), .groups = "drop") %>% 
+  pivot_wider(names_from = l_COGs, values_from = count, values_fill = 0) %>%
+  column_to_rownames("node")
+
+COG_matrix <- COG_matrix[,order(colnames(COG_matrix))]
+COG_matrix <- COG_matrix[,-c(23)] #remove X 
+
+pie_sizes <- rowSums(COG_matrix)
+#pie_sizes[151] <- 0 #Setting myriazoa  to 0
+#pie_sizes[127] <- 0 #Setting planulazoa  to 0
+#pie_sizes[85] <- 0 #Setting cnidaria  to 0
+pie_sizes <- pie_sizes[-(1:76)]
+pie_sizes <- pie_sizes^(1/2)
+pie_sizes <- pie_sizes / max(pie_sizes) * 2
+
+for (i in 77:151) {
+  print(i)
+  df <- COG_setup(i) %>% 
+    filter(padj_loss < 0.01)
+  for (cog in colnames(COG_matrix)) {
+    if (!(cog %in% df$COG_term)) {
+      COG_matrix[i, cog] <- 0
+    }
+  }
+}
+
+COG_matrix <- COG_matrix / rowSums(COG_matrix)
+COG_matrix <- as.matrix(COG_matrix)
+
+# the original cog_matrix did not work properly because a bunch of the pies were one color, but this manually matches the internal nodes to the rows in COG_matrix
+internal_nodes <- as.character((Ntip(tree) + 1):(Ntip(tree) + Nnode(tree)))
+COG_matrix_ordered <- COG_matrix[internal_nodes, ]
+
+pdf("../figures/COGs/l_COG_tree_piesizes.pdf", width = 8, height = 8)
+plot(tree, cex = 0.5) ; nodelabels(pie = COG_matrix_ordered,
+           node = as.numeric(rownames(COG_matrix_ordered)),
+           piecol = cog_colors,
+           cex = pie_sizes[rownames(COG_matrix_ordered)]) ; legend(x = 1.2, y = 50, legend = cog_labels, fill = cog_colors, ncol = 1, cex = 0.6)
+#plot(tree, cex = 0.5, no.margin = TRUE) ;nodelabels()
+dev.off()
+
+
+```
+
+
+```{r bubble_tree, message=FALSE, warning=FALSE}
+
+load("../orthodollo/tree.Rds")
+tree <- tr1
+rm(tr1)
+
+
+#load("/Users/oliviatatro/Downloads/surf/eggnog/eggnog_met.Rdata") 
+setwd("/Users/oliviatatro/Downloads/surf/deepfri/go_figure_tsvs50/")
+
+library(ggforce)
+
+#NODE = 85
+DOTS <- "/Users/oliviatatro/Downloads/surf/deepfri/go_figure_tsvs/anth/gain/biological_process_anth__gain.tsv"
+#CATS <- "/Users/oliviatatro/Downloads/surf/deepfri/go_figure/BP_classified.csv" 
+
+
+library(ggtree)
+tree_plot <- ggtree(tree, branch.length = "none") + 
+  geom_tiplab(size = 4, align = TRUE) +
+  scale_y_reverse() +
+  theme(plot.margin = margin(t = 5, r = 40, b = 5, l = 5)) +
+  coord_cartesian(clip = "off") 
+
+tree_data <- tree_plot$data
+
+collapse_nodes <- data.frame(
+  node = c(130, 82, 91, 117, 113, 136, 100, 104, 109, 134, 142),
+  label = c("Myxozoa", " Hydrozoa", "Scleractinia", " Octocorallia", "Ceriantheria", " Scyphozoa", "Corallimorpharia", "Actinaria", "Zoantheria", "Cubozoa", "Staurozoa")
+)
+
+xright <- filter(tree_data, isTip == TRUE)$x[1]
+
+segments <- data.frame(x = numeric(), xend = numeric(), y = numeric(), yend = numeric())
+
+for (i in 1:nrow(collapse_nodes)) {
+  node <- collapse_nodes$node[i]
+  label <- collapse_nodes$label[i]
+  tree_plot <- collapse(tree_plot, node = node)
+  tree_data <- tree_plot$data
+  xstart <- tree_data$x[tree_data$node == node] # x coord of the node
+  extend <- (xright - xstart - 0.285)
+  tree_plot <- tree_plot + 
+    geom_cladelabel(node = node, label = label, offset = extend, barsize = 1) 
+}
+for (i in 1:nrow(collapse_nodes)) {
+  node <- collapse_nodes$node[i]
+  xstart <- tree_data$x[tree_data$node == node] # x coord of the node
+  y <- tree_data$y[tree_data$node == node]
+  segments <- rbind(segments, data.frame(x = xstart, xend = xright, y = y, yend = y))
+}
+
+tree_plot <- tree_plot + geom_segment(data = segments, aes(x = x, xend = xend, y = y, yend = yend))
+
+gofigureplot <- function(NODE, EVENT) {
+  dots <- gofigure_data %>% filter(node == NODE, event == EVENT) 
+  plot <- ggplot() +
+    geom_circle(data = filter(dots, pval >= 0.01), aes(x0 = x, y0 = y, r = log(size)/30, fill = I("grey70"), col = I("grey70")), stroke = 0.1, alpha = 0.3) +
+    geom_circle(data = filter(dots, pval < 0.01), aes(x0 = x, y0 = y, r = log(size)/30, fill = category, col = category), stroke = 0.1, alpha = 0.7) +
+    scale_fill_manual(values = named_colors) +
+    scale_color_manual(values = named_colors) +
+    scale_x_continuous(limits = c(-2,2)) +
+    scale_y_continuous(limits = c(-2,2)) +
+    theme_void() +
+    theme(legend.position = "none", plot.margin = unit(c(0, 0, 0, 0), "cm"), 
+          axis.text = element_blank(), axis.title = element_blank(), axis.ticks = element_blank(),
+          panel.border = element_rect(size = 1, color = "black", fill = NA),
+          panel.background = element_rect(fill = "white", color = NA))
+  return(plot) 
+}
+
+square_size <- 0.65
+
+
+
+gain_tree_plot <- tree_plot
+for (i in 1: nrow(focal_nodes)){
+  goplot <- gofigureplot(focal_nodes$node_name_full[i],"gain")
+  grob_goplot <- ggplotGrob(goplot)
+  print(grob_goplot)
+  thisnode <-focal_nodes$node_number[i]
+  x <- tree_data[tree_data$node == thisnode, ]$x
+  y <- tree_data[tree_data$node == thisnode, ]$y
+  gain_tree_plot <- gain_tree_plot + 
+      annotation_custom(grob = grob_goplot, xmin = x - square_size, xmax = x + square_size, ymin = -y - square_size, ymax = -y + square_size) 
+}
+
+loss_tree_plot <- tree_plot
+for (i in 1: nrow(focal_nodes)){
+  goplot <- goplot <- gofigureplot(focal_nodes$node_name_full[i],"loss")
+  grob_goplot <- ggplotGrob(goplot)
+  print(grob_goplot)
+  thisnode <-focal_nodes$node_number[i]
+  x <- tree_data[tree_data$node == thisnode, ]$x
+  y <- tree_data[tree_data$node == thisnode, ]$y
+  loss_tree_plot <- loss_tree_plot + 
+      annotation_custom(grob = grob_goplot, xmin = x - square_size, xmax = x + square_size, ymin = -y - square_size, ymax = -y + square_size) 
+}
+loss_tree_plot
+
+grob_legend_dots <- ggplotGrob(legend_dots)
+grob_legend_text <- ggplotGrob(legend_text)
+loss_tree_plot <- loss_tree_plot + 
+  annotation_custom(grob = grob_legend_dots, xmin = -0.5, xmax = -0.25, ymin = -16, ymax = -9.75) +
+  annotation_custom(grob = grob_legend_text, xmin = -0.25, xmax = 4, ymin = -16, ymax = -9.75) 
+gain_tree_plot <- gain_tree_plot + 
+  annotation_custom(grob = grob_legend_dots, xmin = -0.5, xmax = -0.25, ymin = -16, ymax = -9.75) +
+  annotation_custom(grob = grob_legend_text, xmin = -0.25, xmax = 4, ymin = -16, ymax = -9.75) 
+
+# 12.5 height to 8 width
+
+pdf("/Users/oliviatatro/Downloads/surf/figures/deepfri_GOs/bubble_trees.pdf", height = 12, width = 12)
+gain_tree_plot
+loss_tree_plot
+dev.off()
+
+write_csv(filter(gofigure_data, pval < 0.01), "../go_figure_data_sig.csv")
+write_csv(gofigure_data, "../go_figure_data_all.csv")
+
+```
+
+creates a histogram of all of the scores (1 per annotation) from the deepfri data and it is colored by ontology
+
+```{r scores}
+library(ggplot2)
+library(dplyr)
+
+ontology_colors <- c("BP" = "palevioletred", "CC" = "steelblue3", "MF" = "seagreen3", "all" = "orange2")
+
+dir = "/Users/oliviatatro/Downloads/surf/deepfri/"
+
+bp <- read.csv(file.path(dir, "BP.head.csv"), header = FALSE)
+cc <- read.csv(file.path(dir, "CC.head.csv"), header = FALSE)
+mf <- read.csv(file.path(dir, "MF.head.csv"), header = FALSE)
+
+colnames(bp) <- c("Protein", "GO", "Score", "Description")
+colnames(cc) <- c("Protein", "GO", "Score", "Description")
+colnames(mf) <- c("Protein", "GO", "Score", "Description")
+
+bp$Ontology = "BP"
+cc$Ontology = "CC"
+mf$Ontology = "MF"
+
+data <- rbind(bp, cc, mf)
+
+#pdf("../figures/score_histogram.pdf", height = 5, width = 8)
+ggplot(data = data, aes(x = Score, fill = Ontology)) +
+  geom_histogram(bins = 30, col = "black") +
+  scale_fill_manual(values = ontology_colors) +
+  xlab("DeepFRI score") +
+  ylab("Number of annotations") +
+  theme_bw()
+#dev.off()
+
+# okay so my goal is to create a scoores df with columns filter count and ontology 
+  # count is the number of annotations that are above the filter for the deepfri score 
+scores <- data.frame(filter = character(), count = numeric(), ontology = character())
+
+for (thisfilter in c(0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9)) {
+  # total of all the ontologies
+  uniq_count <- data %>% filter(Score >= thisfilter) %>% distinct(Protein) %>% nrow()
+  scores <- rbind(scores, data.frame(filter = thisfilter, ontology = "all", count = uniq_count))
+  # biological process
+  uniq_count <- bp %>% filter(Score >= thisfilter) %>% distinct(Protein) %>% nrow()
+  scores <- rbind(scores, data.frame(filter = thisfilter, ontology = "BP", count = uniq_count))
+  # cellular component
+  uniq_count <- cc %>% filter(Score >= thisfilter) %>% distinct(Protein) %>% nrow()
+  scores <- rbind(scores, data.frame(filter = thisfilter, ontology = "CC", count = uniq_count))
+  # molecular function
+  uniq_count <- mf %>% filter(Score >= thisfilter) %>% distinct(Protein) %>% nrow()
+  scores <- rbind(scores, data.frame(filter = thisfilter, ontology = "MF", count = uniq_count))
+  write.csv(scores, file="myscores.csv")
+}
+
+ggplot(data = scores, aes(x = as.character(filter), y = count, fill = ontology)) +
+  geom_bar(stat = "identity", position = position_dodge(), col = "black") +
+  geom_hline(yintercept = 197, linetype = "dashed") +
+  scale_fill_manual(values = ontology_colors) +
+  xlab("DeepFRI Score Filter") +
+  ylab("Number of centroids annotated") +
+  annotate("text", x = 7.5, y = 205, label = "Total number of centroids", size = 5) +
+  theme_bw()
+
+
+ggplot(data = scores, aes(x = as.character(filter), y = count/1000000, fill = ontology)) +
+  geom_bar(stat = "identity", position = position_dodge(), col = "black") +
+  geom_hline(yintercept = 2684787/1000000, linetype = "dashed") +
+  scale_fill_manual(values = ontology_colors) +
+  xlab("DeepFRI Score Filter") +
+  ylab("Number of centroids annotated (millions)") +
+  annotate("text", x = 7.5, y = 2.8, label = "Total number of centroids", size = 5) +
+  theme_bw()
+
+```
+
+
+
+
+
+

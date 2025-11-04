@@ -1,0 +1,1020 @@
+
+# 1. Import and setup (run for all species)
+```{r libraries, message=FALSE, warning=FALSE, paged.print=FALSE}
+library(this.path)
+setwd(this.dir())
+library(SingleCellExperiment)
+library(dplyr)
+library(stringr)
+library(tibble)
+library(cowplot)
+library(Matrix)
+
+if(!require(DropletUtils)){
+  BiocManager::install("DropletUtils")
+}
+library(DropletUtils)
+
+if(!require(scater)){
+  BiocManager::install("scater")
+}
+library(scater)
+
+if(!require(scran)){
+  BiocManager::install("scran")
+}
+library(scran)
+
+if(!require(scry)){
+  BiocManager::install("scry")
+}
+library(scry)
+
+if(!require(intergraph)){
+  BiocManager::install("intergraph")
+}
+library(igraph)
+
+if(!require(SingleR)){
+  BiocManager::install("SingleR")
+}
+library(SingleR)
+
+library(tidyr)
+library(pheatmap)
+library(paletteer)
+library(Seurat)
+library(SeuratData)
+library(tidyseurat)
+```
+
+```{r import_data}
+
+sc_dir = "/Users/oliviatatro/Downloads/surf/single_cell"
+# load loss_gain table
+  # columns: OGs
+  # rows: node numbers
+load("/Users/oliviatatro/Downloads/surf/orthodollo/loss_gain_pres_abs_H1.Rds")
+
+# load og mapping files
+  # columns: og and sc_ID
+load("OG_maps.Rdata")
+
+if(file.exists(file.path(sc_dir, "GO_OG_descriptions.Rdata"))) {
+  load(file.path(sc_dir, "GO_OG_descriptions.Rdata"))
+} else {
+  GO_functions <- read.table("/Users/oliviatatro/Downloads/surf/deepfri/go_term_descriptions.tsv", sep = "\t", header = TRUE)
+  load("/Users/oliviatatro/Downloads/surf/deepfri/deepfri50.Rdata")
+  
+  cc <- select(cc, c(Protein, GO)) %>% mutate(Protein = gsub("^(OG[0-9]{7}).*$", "\\1", Protein))
+  cc <- cc %>% group_by(Protein, GO) %>% summarize(count = n())
+  cc <- merge(cc, GO_functions, by.x = "GO", by.y = "members")
+  
+  mf <- select(mf, c(Protein, GO)) %>% mutate(Protein = gsub("^(OG[0-9]{7}).*$", "\\1", Protein))
+  mf <- mf %>% group_by(Protein, GO) %>% summarize(count = n())
+  mf <- merge(mf, GO_functions, by.x = "GO", by.y = "members")
+  
+  bp <- select(bp, c(Protein, GO)) %>% mutate(Protein = gsub("^(OG[0-9]{7}).*$", "\\1", Protein))
+  bp <- bp %>% group_by(Protein, GO) %>% summarize(count = n())
+  bp <- merge(bp, GO_functions, by.x = "GO", by.y = "members")
+  
+  save(cc, bp, mf, file = "GO_OG_descriptions.Rdata")
+  
+}
+
+deepfri_met <- rbind(cc, mf, bp)
+rm(cc)
+rm(mf)
+rm(bp)
+```
+
+```{r setup_focal_nodes}
+
+# ----------------------- get gained ogs by node -----------------
+# build focal_nodes df:
+  # node: node number
+  # name: abreviated node name (eg "anth")
+  # ogs: list of ogs gained at node
+focal_nodes <- data.frame(
+  node = c(132, 133, 103, 104, 129, 130, 105, 116, 163, 159, 134, 137, 120, 108, 102, 150), 
+  name = c("anth", "anth2", "endomed", "med", "endo", "myx", "hyd", "acr", "oct", "cer", "hex", "scler", "scyph", "siph", "cnid", "act")
+  )
+print("Extracting OG gains for focal nodes from the orthodollo lossgain table...")
+focal_nodes$ogs <- lapply(focal_nodes$node, function(n){
+  colnames(lossgain.table)[lossgain.table[n, ] == "g"]
+})
+rm(lossgain.table)
+
+library(Polychrome)
+node_cols <- palette36.colors(16)
+names(node_cols) <- focal_nodes$name
+
+```
+
+# 2. Functions
+
+```{r feature_plot_function}
+
+feature_plots <- function(sc_obj, ogs_gained, ogmap, node, bins = 24, seurat = TRUE, reduction, color_norm = TRUE, min = 0, max = 1, border = "black") {
+  genes_gained <- filter(ogmap, og %in% unlist(ogs_gained)) %>% 
+    pull(sc_ID)
+  
+  # dont convert to seurat if it is already a seurat
+  if(!seurat){
+    seurat_obj <- Seurat::as.Seurat(sc_obj, counts = "counts", data = "logcounts")
+  } else {
+    seurat_obj <- sc_obj
+  }
+  # creates a new column in meta.data called "node_gains1"
+  seurat_obj <- AddModuleScore(object = seurat_obj, 
+                               features = list(genes_gained), # need to wrap it in a list, but when I add more nodes I can do a list of vectors to have each node. 
+                               name = "node_gains",
+                               nbin = bins)
+  score_vals <- seurat_obj@meta.data$node_gains1
+  minimum <- min(score_vals)
+  maximum <- max(score_vals)
+  if (color_norm) {
+    feature_plot <- FeaturePlot(seurat_obj, features = "node_gains1", reduction = reduction) + 
+      scale_colour_gradientn(colors = c("yellow", "deeppink1", "blue"), limits = c(min, max)) +
+      theme(plot.background = element_rect(color = border, fill = NA, size = 3)) +
+      ggtitle(paste(NULL)) +
+      theme(legend.position = "none")
+  } else {
+    feature_plot <- FeaturePlot(seurat_obj, features = "node_gains1", reduction = reduction) + 
+      scale_colour_gradientn(colors = c("yellow", "deeppink1", "blue")) +
+      theme(plot.background = element_rect(color = border, fill = NA, size = 3)) +
+      ggtitle(NULL)
+  }
+  
+  legend <- FeaturePlot(seurat_obj, features = "node_gains1", reduction = reduction) + 
+      scale_colour_gradientn(colors = c("yellow", "deeppink1", "blue"), limits = c(min, max))+
+        theme(
+          legend.key.height = unit(1.9, "cm"),
+          legend.key.width = unit(1, "cm")
+        )
+  legend <- cowplot::get_legend(legend)
+  
+  print(feature_plot) 
+  print(legend)
+  
+  return(c(feature_plot, minimum, maximum, legend))
+}
+```
+
+```{r heat}
+heatmaps <- function(reference, ogs_gained, node, ogmap, deepfri_met, threshold = 1) {
+
+  # filtering reference for genes in gained ogs 
+  gene_gains <- filter(ogmap, og %in% unlist(ogs_gained)) %>% 
+    pull(sc_ID)
+  filtered_ref <- reference[rownames(reference) %in% gene_gains, ]
+  
+  # heat map of gene expression by cell type
+  print(pheatmap::pheatmap(filtered_ref, scale = "none", main = paste("Mean expression of genes in OGs gained at", node)))
+  
+  # adding OG data and averaging gene expression per OG
+  filtered_ref$sc_ID <- rownames(filtered_ref)
+  filtered_ref <- merge(filtered_ref, ogmap, by = "sc_ID", all.x = TRUE, all.y = FALSE) %>% dplyr::select(-sc_ID) %>% 
+    group_by(og) %>% summarise(across(everything(), ~mean(.x, na.rm = TRUE)))
+  
+  filtered_ref <- as.data.frame(filtered_ref)
+  rownames(filtered_ref) <- filtered_ref$og
+  filtered_ref <- filtered_ref %>% dplyr::select(-og)
+  
+  # heat map of og gene expression by cell type 
+  #print(pheatmap::pheatmap(filtered_ref, scale = "none", main = paste("Mean expression of OGs gained at", node, "by", by)))
+  
+  
+  # subset the OG heat map to include only OGs that have high expression at least somewhere
+  exp_subset <- filtered_ref[apply(filtered_ref, 1, function(row) any(row > threshold)),]
+  
+  #print(pheatmap::pheatmap(log10(exp_subset + 1), scale = "none", main = paste("Mean expression of OGs gained at", node, "by", by, "zoomed in on OGs with highest expression"), fontsize_row = 4))
+  
+  
+  # incorporating COG data to get a cell type by COG heatmap
+  
+  # reading in OG -> COG df 
+  cogs <- read.table("../eggnog/OG_COG.tsv", header = TRUE)
+  
+  # calculate the proportion of each OG annotated by each cog
+  cogs <- cogs %>% group_by(query, COG_category) %>% summarize(count = n())
+  cogs <- cogs %>% group_by(query) %>% mutate(sum = sum(count)) %>% mutate(prop = count / sum)
+  
+  # taking the top cog for each OG and adding that as a row annotation
+  top_cogs <- cogs %>% group_by(query) %>% 
+    slice_max(order_by = count, n = 1, with_ties = FALSE) %>%
+    ungroup() %>% 
+    select(query, COG_category) %>% 
+    as.data.frame()
+  
+  rownames(top_cogs) <- top_cogs$query
+  top_cogs <- top_cogs %>% select(-query)
+  
+  print(pheatmap::pheatmap(filtered_ref, scale = "none", annotation_row = top_cogs, main = paste("Mean expression of OGs gained at", node)))
+  # possible error if the subset does not have at least 2 entries
+  try(print(pheatmap::pheatmap(exp_subset, scale = "none", annotation_row = top_cogs, main = paste("Mean expression of OGs gained at", node, "zoomed in on OGs with highest expression"), fontsize_row = 4)), silent = TRUE)
+  
+  # subset the OG heatmap by a specific COG
+#  for (cog in unique(cogs$COG_category)) {
+#    print(cog)
+#    ogs <- cogs %>% filter(COG_category == cog) %>% pull(query)
+#    cog_subset <- filtered_ref[rownames(filtered_ref) %in% ogs,]
+#    if(nrow(cog_subset) > 10) {
+#      print(pheatmap::pheatmap(cog_subset, scale = "none", main = paste("Mean expression of OGs #gained at", node, "zoomed in on OGs annotated with COG:", cog), fontsize_row = 4)) 
+#    }
+#  }
+  
+  # initialize an empty cell_type by COG df 
+  cog_table <- as.data.frame(matrix(nrow = length(unique(cogs$COG_category)), ncol = ncol(filtered_ref), data = 0))
+  colnames(cog_table) <- colnames(filtered_ref)
+  rownames(cog_table) <- unique(cogs$COG_category)
+
+  # iterates through all OGs in both the COGs df and the filtered_ref and adds the expression data to a new df (cog_table). expression is multiplied by the proportion of the OG that was annotated with that cog
+  for (og in intersect(rownames(filtered_ref), unique(cogs$query))){
+    og_cogs <- cogs %>% filter(query == og)
+    for (row in 1:nrow(og_cogs)) {
+      cog <- as.character(og_cogs[row, "COG_category"])
+      prop <- as.numeric(og_cogs[row, "prop"])
+      cog_table[cog,] <- cog_table[cog,] + filtered_ref[og,] * prop
+    }
+  }
+  
+  print(pheatmap::pheatmap(cog_table, scale = "none", main = paste("Mean expression of OGs gained at", node, "grouped by COG category")))
+  
+  
+  # this section incorporates the GO categories from deepfri
+  
+  # calculate prop of centroid sequence for each OG annotated by each GO category
+  deepfri <- deepfri_met %>% select(c(Protein, category, count)) %>% 
+    group_by(Protein, category) %>% 
+    summarize(new_count = sum(count))
+  deepfri <- deepfri %>% group_by(Protein) %>% mutate(sum = sum(new_count)) %>% mutate(prop = new_count / sum)
+  
+  # create empty celltype by go category
+  go_table <- as.data.frame(matrix(nrow = length(unique(deepfri$category)), ncol = ncol(filtered_ref), data = 0))
+  colnames(go_table) <- colnames(filtered_ref)
+  rownames(go_table) <- unique(deepfri$category)
+  
+  # iterates through all OGs in both the deepfri df and the filtered_ref and adds the expression data to a new df (go_table). expression is multiplied by the proportion of the OG that was annotated with that go category
+  for (og in intersect(rownames(filtered_ref), unique(deepfri$Protein))){
+    og_gos <- deepfri %>% filter(Protein == og)
+    for (row in 1:nrow(og_gos)) {
+      go_category <- as.character(og_gos[row, "category"])
+      prop <- as.numeric(og_gos[row, "prop"])
+      go_table[go_category,] <- go_table[go_category,] + filtered_ref[og,] * prop
+    }
+  }
+  
+  
+  print(pheatmap::pheatmap(go_table, scale = "none", main = paste("Mean expression of OGs gained at", node, "grouped by GO category")))
+  
+  
+  
+  # incorporate the GO terms by gofigure cluster:
+  deepfri <- deepfri_met %>% select(c(Protein, description, count)) %>% 
+    group_by(Protein, description) %>% 
+    summarize(new_count = sum(count))
+  deepfri <- deepfri %>% group_by(Protein) %>% mutate(sum = sum(new_count)) %>% mutate(prop = new_count / sum)
+  
+  # create empty celltype by go description
+  go_cluster_table <- as.data.frame(matrix(nrow = length(unique(deepfri$description)), ncol = ncol(filtered_ref), data = 0))
+  colnames(go_cluster_table) <- colnames(filtered_ref)
+  rownames(go_cluster_table) <- unique(deepfri$description)
+  
+  # iterates through all OGs in both the deepfri df and the filtered_ref and adds the expression data to a new df (go_cluster_table). expression is multiplied by the proportion of the OG that was annotated with that go category
+  for (og in intersect(rownames(filtered_ref), unique(deepfri$Protein))){
+    og_gos <- deepfri %>% filter(Protein == og)
+    for (row in 1:nrow(og_gos)) {
+      go_description <- as.character(og_gos[row, "description"])
+      prop <- as.numeric(og_gos[row, "prop"])
+      go_cluster_table[go_description,] <- go_cluster_table[go_description,] + filtered_ref[og,] * prop
+    }
+  }
+  
+  # truncate row names
+  rownames(go_cluster_table) <- make.unique(substr(rownames(go_cluster_table), 1, 25))
+  filtered_clusters <- go_cluster_table[!apply(go_cluster_table, 1, function(x) all(x == 0)), ]
+  print(pheatmap::pheatmap(filtered_clusters, scale = "none", main = paste("Mean expression of OGs gained at", node, "grouped by GO cluster"), fontsize_row = 4))
+  
+  
+  # subset the GO cluster heat map to include only GO_clusters that have high expression at least somewhere
+  cluster_subset <- filtered_clusters[apply(filtered_clusters, 1, function(row) any(row > threshold)),]
+  
+  # possible error if the threshold is too high
+  try(print(pheatmap::pheatmap(log10(cluster_subset + 1), scale = "none", main = paste("Mean expression of OGs gained at", node, "grouped by GO cluster, zoomed in on clusters with high expression"), fontsize_row = 6), silent = TRUE))
+  
+}
+```
+
+``` {r var_plot}
+var_plot <- function(seurat_obj, ogmap, nodes) {
+  
+  data_mat <- seurat_obj[["RNA"]]@data
+  var <- apply(data_mat, 1, var)
+  mean <- apply(data_mat, 1, mean)
+  
+  var_lims <- c(min(var), max(var))
+  mean_lims <- c(min(mean), max(mean))
+  
+  genes <- data.frame(gene = names(var), var = var, mean = mean)
+  rownames(genes) <- 1:nrow(genes)
+  
+  genes$gain_node <- NA
+
+  label_y <- var_lims[2]
+  p <- ggplot() +
+    geom_point(data = genes, x = mean, y = var, size = 0.5) +
+    scale_x_continuous(limits = mean_lims) +
+    scale_y_continuous(limits = var_lims) +
+    xlab("Mean of log expression") +
+    ylab("Variance of log expression") +
+    theme_bw() +
+    annotate("text", x = 0, y = label_y, label = "All genes", size = 5, color = "black", hjust = 0)
+  label_y = label_y - 0.1
+  
+  for (node in nodes){
+    ogs_gained <- focal_nodes$ogs[focal_nodes$name == node]
+    genes_gained <- filter(ogmap, og %in% unlist(ogs_gained)) %>% pull(sc_ID)
+    
+    genes$gain_node <- ifelse(genes$gene %in% genes_gained, node, genes$gain_node)
+    
+    genes_subset <- genes %>% filter(gene %in% genes_gained)
+    
+    p <- p + geom_point(data = genes_subset, aes(x = mean, y = var), col = node_cols[node])
+    
+    p <- p + annotate("text", x = 0, y = label_y, label = paste(node, "gained genes"), size = 5, color = node_cols[node], hjust = 0)
+    label_y = label_y - 0.1
+  }
+  print(p)
+  
+  return(genes)
+}
+
+```
+
+```{r plots}
+plots <- function(seurat_obj, ogmap, nodes, bins = 24, reduction, ref, genus){
+  
+  dir.create(file.path("/Users/oliviatatro/Downloads/surf/figures", genus))
+
+  # we will be using the RNA assay for the featureplots because it has all the genes, but the expression needs to be normalized
+  print("Normalizing RNA assay...")
+  DefaultAssay(seurat_obj) <- "RNA"
+  NormalizeData(seurat_obj, normalization.method = "LogNormalize")
+  
+  plot_color_fix <- list()
+  plots <- list()
+  minimums <- list()
+  maximums <- list()
+  
+  print("Creating featurePlots...")
+  for (node in nodes){
+    print(node)
+    og_gain <- focal_nodes$ogs[focal_nodes$name == node]
+    
+    plot_output <- feature_plots(seurat_obj, ogs_gained = og_gain, ogmap = ogmap, node = node, bins = bins, seurat = TRUE, reduction = reduction, color_norm = FALSE, border = node_cols[node])
+    
+    plots <- append(plots, plot_output[[1]])
+    minimums <- append(minimums, plot_output[[2]])
+    maximums <- append(maximums, plot_output[[3]])
+  }
+  min = min(unlist(minimums))
+  max = max(unlist(maximums))
+  
+  for (node in nodes){
+    print(node)
+    og_gain <- focal_nodes$ogs[focal_nodes$name == node]
+    
+    plot_output <- feature_plots(seurat_obj, ogs_gained = og_gain, ogmap = ogmap, node = node, bins = 16, seurat = TRUE, reduction = "umap", color_norm = TRUE, min = min, max = max, border = node_cols[node])
+    
+    plot_color_fix <- append(plot_color_fix, plot_output[[1]])
+    minimums <- append(minimums, plot_output[[2]])
+    maximums <- append(maximums, plot_output[[3]])
+    legend <- plot_output[[4]]
+  }
+  
+  clusters <- DimPlot(Nv, reduction = "umap", group.by = "IDs", pt.size = 0.25)
+  all_plots = c(plots, clusters, plot_color_fix, legend)
+  
+  pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_feature_plots.pdf")), height = 8, width = length(nodes) * 4)
+  cowplot::plot_grid(plotlist = all_plots, nrow = 2, ncol = length(nodes) + 1)
+  dev.off()
+  
+  # ------------------------------- heatmaps -----------------------------------
+  
+  print("Creating heatmaps...")
+  for (node in nodes){
+    print(node)
+    pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_", node, ".pdf")), height = 11, width = 8)
+    
+    og_gain <- focal_nodes$ogs[focal_nodes$name == node]
+    
+    print(heatmaps(ref, og_gain, node, ogmap = ogmap, deepfri_met, threshold = 0.5)) 
+  
+    dev.off()
+  }
+  
+  # ---------------------------- gene expression and variation -----------------------
+  
+  print("Creating variance_plots")
+  pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_variance.pdf")), height = 8, width = 8)
+  
+  genes <- var_plot(seurat_obj, ogmap, nodes)
+  
+  dev.off()
+  
+  # is there a difference in variation of expression of genes gained at different nodes?
+  print("modeling var ~ gain_node")
+  anova <- aov(var ~ gain_node, data = genes)
+  print(summary(anova))
+  print(TukeyHSD(anova))
+  
+  # is there a difference in mean expression of genes gained at different nodes?
+  print("modeling mean ~ gain_node")
+  anova <- aov(mean ~ gain_node, data = genes)
+  print(summary(anova))
+  print(TukeyHSD(anova))
+  
+  print("means and sds of expression at different nodes")
+  print(genes %>% group_by(gain_node) %>% 
+    summarise(mean_mean = mean(mean),
+              sd_mean = sd(mean), 
+              mean_var = mean(var), 
+              sd_var = sd(var)))
+
+}
+
+
+```
+
+# 3. Species
+
+```{r turritopsis, eval = FALSE}
+dir = file.path(sc_dir, "turritopsis")
+
+# ----------------------------- load turritopsis medusa data from the compare species Rds ------------------
+
+if (file.exists(file.path(dir, "turritopsis_medusa.Rds"))) {
+  Tr <- readRDS(file.path(dir, "turritopsis_medusa.Rds"))
+} else {
+  TrAu<-readRDS(file.path(dir, "compare_species.rds"))
+  ###resolution of cell clusters
+  Idents(TrAu)<-"integrated_snn_res.0.3" #from author's code
+  
+   #load published annotations
+  trau_cells<-read.csv(file.path(dir, "cell_codes.txt")) #expanded cell descriptions from supplement's original table
+  trau_cells$cluster<-factor(trau_cells$cluster)
+  TrAu<-left_join(TrAu,trau_cells,by=c("integrated_snn_res.0.3"="cluster"))
+  Idents(TrAu)<-"cell_type"
+  
+  Tr<-TrAu[,TrAu$orig.ident%in%c("DTCT")]
+  rm(TrAu)
+  
+  DefaultAssay(Tr) <- "RNA"
+  Tr <- SCTransform(Tr, variable.features.n = 100000, return.only.var.genes = FALSE)
+  all_var_genes <- VariableFeatures(Tr)
+  topgenes <- head(all_var_genes, 0.2*length(all_var_genes))
+  length(topgenes)
+  rm(all_var_genes)
+  
+  Tr <- RunPCA(Tr, features = topgenes)
+  Tr <- RunUMAP(Tr, dims = )
+  
+  DimPlot(Tr, reduction = "umap", label = TRUE, pt.size = 0.5) #+NoLegend()
+  saveRDS(Tr, file = file.path(dir,"turritopsis_medusa.Rds"))
+}
+#rm(Tr) 
+
+# ----------------------------- load medusa data from the combined stages Rds  ------------------
+# load medusa data from the combined stages Rds 
+if (file.exists(file.path(dir, "turritopsis_medusa2.Rds"))) {
+  Tr <- readRDS(file.exists(file.path(dir, "turritopsis_medusa2.Rds")))
+} else {
+  Tr_stages<-readRDS("Turritopsis rubra_5stage_liger.rds")
+  Idents(Tr_stages)<-"cell_type"
+  
+  rownames(Tr_stages) <- gsub("-", "_", rownames(Tr_stages))
+  
+  unique(Tr_stages$orig.ident)# "DTCT" (medusa) "DTSYC" (scyphistoma?) "DTBN" (?)  "DTSX" (?) "DTFL" (fourleaf?) correspond somehow to the medusa, polyp/scyphistoma, planula, four-leaf and cyst stages
+  
+  turritopsis_medusa <- subset(Tr_stages, subset = orig.ident == "DTCT")
+  rm(Tr_stages)
+  
+  turritopsis_medusa <- SCTransform(turritopsis_medusa)
+  turritopsis_medusa <- RunPCA(turritopsis_medusa)
+  turritopsis_medusa <- RunUMAP(turritopsis_medusa, dims = 1:20)
+  turritopsis_medusa <- RunTSNE(turritopsis_medusa, dims = 1:20)
+  DimPlot(turritopsis_medusa, reduction = "pca", label = TRUE, pt.size = 0.5)
+  DimPlot(turritopsis_medusa, reduction = "umap", label = TRUE, pt.size = 0.5)
+  DimPlot(turritopsis_medusa, reduction = "tsne", label = TRUE, pt.size = 0.5)
+  saveRDS(turritopsis_medusa, file = file.path(dir,"turritopsis_medusa2.Rds"))
+}
+rm(turritopsis_medusa)
+
+DimPlot(Tr, reduction = "pca", label = TRUE, pt.size = 0.5)
+DimPlot(Tr, reduction = "umap", label = TRUE, pt.size = 0.5)
+DimPlot(Tr, reduction = "tsne", label = TRUE, pt.size = 0.5)
+
+# --------------------------------- make ref df / setup --------------------------------
+trau_cells<-read.csv(file.path(dir, "cell_codes.txt")) #expanded cell descriptions from supplement's original table
+trau_cells$cluster<-factor(trau_cells$cluster)
+  
+file_path <- file.path(dir, "Supplementary Data 15.xlsx")
+turritopsis_ref<-readxl::read_excel(file_path,skip=1) 
+  
+turritopsis_ref <- merge(trau_cells, turritopsis_ref, by = "cluster", all = TRUE) %>% 
+  select(cell_type, gene...1, avg_log2FC)
+colnames(turritopsis_ref) <- c("cell_type", "gene", "avg_log2FC")
+turritopsis_ref <- turritopsis_ref %>% pivot_wider(.,names_from = cell_type,values_from = avg_log2FC,values_fill = 0)  %>%
+  tibble::column_to_rownames(var="gene")
+
+nodes <- c("cnid", "endomed", "med", "acr", "scyph")
+genus <- "turritopsis"
+dir.create(file.path("/Users/oliviatatro/Downloads/surf/figures", genus))
+
+# ------------------------------ feature plots -------------------------------
+plot_color_fix <- list()
+plots <- list()
+
+for (node in nodes){
+  print(node)
+  og_gain <- focal_nodes$ogs[focal_nodes$name == node]
+  
+  new_plot <- feature_plots(Tr, ogs_gained = og_gain, ogmap = aurelia_map, node = node, bins = 16, seurat = TRUE, reduction = "tsne", color_norm = FALSE)
+  plots <- append(plots, new_plot)
+  
+  new_plot <- feature_plots(Tr, ogs_gained = og_gain, ogmap = aurelia_map, node = node, bins = 16, seurat = TRUE, reduction = "tsne", color_norm = TRUE, min = -0.1, max = 0.25)
+  plot_color_fix <- append(plot_color_fix, new_plot)
+}
+clusters <- DimPlot(Tr, reduction = "tsne")
+all_plots = c(plots, plot_color_fix, clusters)
+pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_feature_plots.pdf")), height = 12, width = 25)
+cowplot::plot_grid(plotlist = all_plots, nrow = 3, ncol = 5)
+dev.off()
+
+
+# ------------------------------- heatmaps -----------------------------------
+
+
+for (node in nodes){
+  print(node)
+  pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_", node, ".pdf")), height = 11, width = 8)
+  
+  og_gain <<- focal_nodes$ogs[focal_nodes$name == node]
+  
+  heatmaps(turritopsis_ref, og_gain, node, ogmap = aurelia_map, deepfri_met, threshold = 1) 
+
+  dev.off()
+}
+
+# ---------------------------- gene expression and variation -----------------------
+
+pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_variance.pdf")), height = 11, width = 8)
+var_df <- variance(Tr, aurelia_map, nodes, genus)
+dev.off()
+
+# is there a difference in variation of expression of genes gained at different nodes?
+anova <- aov(variance ~ node, data = var_df)
+summary(anova)
+TukeyHSD(anova)
+
+# is there a difference in mean expression of genes gained at different nodes?
+anova <- aov(gmean ~ node, data = var_df)
+summary(anova)
+TukeyHSD(anova)
+
+# --------------------------- save counts for cNMF ------------------------
+# only need to run once
+#counts_mat <- GetAssayData(Tr, assay = "SCT", layer = "data")
+#writeMM(counts_mat, file.path(dir, "matrix.mtx"))
+#writeLines(rownames(counts_mat), file.path(dir, "features.tsv"))
+#writeLines(colnames(counts_mat), file.path(dir, "barcodes.tsv"))
+
+rm(Tr)
+rm(anova)
+rm(turritopsis_ref)
+rm(var_df)
+rm(hvf_info)
+rm(hvf_info_Tr)
+rm(trau_cells)
+rm(hvf_subset)
+```
+
+```{r aurelia, eval = FALSE}
+dir = file.path(sc_dir, "aurelia")
+
+# ----------------------------- load turritopsis medusa data from the compare species Rds ------------------
+
+if (file.exists(file.path(dir, "seurat_aurelia.Rds"))) {
+  Au <- readRDS(file.path(dir, "seurat_aurelia.Rds"))
+} else {
+  TrAu<-readRDS(file.path(sc_dir, "turritopsis", "compare_species.rds"))
+  ###resolution of cell clusters
+  Idents(TrAu)<-"integrated_snn_res.0.3" #from author's code
+  
+   #load published annotations
+  trau_cells<-read.csv(file.path(sc_dir, "turritopsis", "cell_codes.txt")) #expanded cell descriptions from supplement's original table
+  trau_cells$cluster<-factor(trau_cells$cluster)
+  TrAu<-left_join(TrAu,trau_cells,by=c("integrated_snn_res.0.3"="cluster"))
+  Idents(TrAu)<-"cell_type"
+  ###extract medusa of Aurelia coerulea matrix
+  Au<-TrAu[,TrAu$orig.ident%in%c("HYCT")]
+  rm(TrAu)
+
+  # rerunning SCTransform to have control over params
+  DefaultAssay(Au) <- "RNA"
+  Au <- SCTransform(Au, return.only.var.genes = FALSE, variable.features.n = 20000)
+  #VariableFeatures(Au) <- head(VariableFeatures(Au), 1000)
+  
+  Au <- RunPCA(Au)
+  ElbowPlot(Au, ndims = 50)
+  Au <- RunUMAP(Au, dims = 1:30)
+  Au <- RunTSNE(Au, dims = 1:30)
+  
+
+  saveRDS(Au, file = file.path(dir, "seurat_aurelia.Rds"))
+}
+
+DimPlot(Au, reduction = "pca", label = TRUE, pt.size = 0.5)
+DimPlot(Au, reduction = "umap", label = TRUE, pt.size = 0.5)
+DimPlot(Au, reduction = "tsne", label = TRUE, pt.size = 0.5)
+
+# --------------------------------- make ref df / setup --------------------------------
+trau_cells<-read.csv(file.path(sc_dir, "turritopsis", "cell_codes.txt")) #expanded cell descriptions from supplement's original table
+trau_cells$cluster<-factor(trau_cells$cluster)
+  
+file_path <- file.path(sc_dir,"turritopsis", "Supplementary Data 15.xlsx")
+aurelia_ref<-readxl::read_excel(file_path,skip=1) 
+  
+aurelia_ref <- merge(trau_cells, aurelia_ref, by = "cluster", all = TRUE) %>% 
+  select(cell_type, gene...1, avg_log2FC)
+colnames(aurelia_ref) <- c("cell_type", "gene", "avg_log2FC")
+aurelia_ref <- aurelia_ref %>% pivot_wider(.,names_from = cell_type,values_from = avg_log2FC,values_fill = 0)  %>%
+  tibble::column_to_rownames(var="gene")
+
+nodes <- c("cnid", "endomed", "med", "acr", "scyph")
+genus <- "aurelia"
+dir.create(file.path("/Users/oliviatatro/Downloads/surf/figures", genus))
+
+# ------------------------------ feature plots -------------------------------
+plot_color_fix <- list()
+plots <- list()
+
+for (node in nodes){
+  print(node)
+  og_gain <- focal_nodes$ogs[focal_nodes$name == node]
+  
+  new_plot <- feature_plots(Au, ogs_gained = og_gain, ogmap = aurelia_map, node = node, bins = 16, seurat = TRUE, reduction = "tsne", color_norm = FALSE)
+  plots <- append(plots, new_plot)
+  
+  new_plot <- feature_plots(Au, ogs_gained = og_gain, ogmap = aurelia_map, node = node, bins = 16, seurat = TRUE, reduction = "tsne", color_norm = TRUE, min = -0.1, max = 0.25)
+  plot_color_fix <- append(plot_color_fix, new_plot)
+}
+clusters <- DimPlot(Au, reduction = "tsne")
+all_plots = c(plots, plot_color_fix, clusters)
+pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_feature_plots.pdf")), height = 12, width = 25)
+cowplot::plot_grid(plotlist = all_plots, nrow = 3, ncol = 5)
+dev.off()
+
+
+# ------------------------------- heatmaps -----------------------------------
+
+
+for (node in nodes){
+  print(node)
+  pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_", node, ".pdf")), height = 11, width = 8)
+  
+  og_gain <<- focal_nodes$ogs[focal_nodes$name == node]
+  
+  heatmaps(aurelia_ref, og_gain, node, ogmap = aurelia_map, deepfri_met, threshold = 1) 
+
+  dev.off()
+}
+
+# ---------------------------- gene expression and variation -----------------------
+
+pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_variance.pdf")), height = 8, width = 8)
+var_df <- variance(Au, aurelia_map, nodes, genus)
+dev.off()
+
+# is there a difference in variation of expression of genes gained at different nodes?
+anova <- aov(variance ~ node, data = var_df)
+summary(anova)
+TukeyHSD(anova)
+
+# is there a difference in mean expression of genes gained at different nodes?
+anova <- aov(gmean ~ node, data = var_df)
+summary(anova)
+TukeyHSD(anova)
+
+# --------------------------- save counts for cNMF ------------------------
+# only need to run once
+#counts_mat <- GetAssayData(Au, assay = "SCT", layer = "data")
+#writeMM(counts_mat, file.path(dir, "matrix.mtx"))
+#writeLines(rownames(counts_mat), file.path(dir, "features.tsv"))
+#writeLines(colnames(counts_mat), file.path(dir, "barcodes.tsv"))
+
+```
+
+```{r acropora, eval = FALSE}
+dir = file.path(sc_dir, "acropora")
+
+# ----------------------------- load acropora seurat data --------------------------
+
+Am <- readRDS(file.path(dir,"AM.cell_types.sct.rds"))
+
+
+
+DimPlot(Am, reduction = "pca", group.by = "cell_type", label = TRUE, pt.size = 0.5)
+DimPlot(Am, reduction = "umap", group.by = "cell_type", label = TRUE, pt.size = 0.5)
+DimPlot(Am, reduction = "tsne", group.by = "cell_type", label = TRUE, pt.size = 0.5)
+
+# --------------------------------- make ref df / setup --------------------------------
+file_path <- file.path(dir, "42003_2025_8089_MOESM4_ESM.xlsx")
+sheet_names <- readxl::excel_sheets(file_path)
+all_sheets_data <- lapply(sheet_names, readxl::read_excel, path = file_path)
+names(all_sheets_data) <- sheet_names
+merged_df <- bind_rows(all_sheets_data, .id = "cell_type")
+merged_df$gene_id<-unlist(lapply(merged_df$gene_id,function(x) gsub("model","TU",x))) #match gene ids to features in scRNA data
+acropora_map2 <- merged_df %>% dplyr::select(NR_description,gene_id) %>% 
+  mutate(NR_description = sub("(\\.\\d+).*", "\\1", NR_description)) %>% 
+  filter(!is.na(NR_description))
+acropora_ref <- merged_df %>% dplyr::select(NR_description,cell_type,avg_log2FC) %>% 
+  mutate(NR_description = sub("(\\.\\d+).*", "\\1", NR_description)) %>% 
+  filter(!is.na(NR_description)) %>% 
+  group_by(NR_description, cell_type) %>%
+  summarise(avg_log2FC = mean(avg_log2FC, na.rm = TRUE), .groups = "drop") %>% 
+  pivot_wider(.,names_from = cell_type,values_from = avg_log2FC, values_fill = 0)  %>%
+  tibble::column_to_rownames(var="NR_description")
+
+acropora_ref$NR_description <- rownames(acropora_ref)
+acropora_ref <- merge(acropora_ref, unique(acropora_map2), by = "NR_description")
+acropora_ref <- acropora_ref %>% select(-NR_description) %>% 
+  column_to_rownames(var = "gene_id")
+
+acropora_map <- merge(acropora_map, acropora_map2, by.x = "sc_ID", by.y = "NR_description") %>% 
+  select(-sc_ID) %>% 
+  rename(sc_ID = gene_id)
+
+nodes <- c("cnid", "anth", "anth2", "hex", "scler")
+genus <- "acropora"
+dir.create(file.path("/Users/oliviatatro/Downloads/surf/figures", genus))
+
+# ------------------------------ feature plots -------------------------------
+plot_color_fix <- list()
+plots <- list()
+
+for (node in nodes){
+  print(node)
+  og_gain <- focal_nodes$ogs[focal_nodes$name == node]
+  
+  new_plot <- feature_plots(Am, ogs_gained = og_gain, ogmap = acropora_map, node = node, bins = 16, seurat = TRUE, reduction = "tsne", color_norm = FALSE)
+  plots <- append(plots, new_plot)
+  
+  new_plot <- feature_plots(Am, ogs_gained = og_gain, ogmap = acropora_map, node = node, bins = 16, seurat = TRUE, reduction = "tsne", color_norm = TRUE, min = -1, max = 5)
+  plot_color_fix <- append(plot_color_fix, new_plot)
+}
+clusters <- DimPlot(Am, reduction = "tsne", group.by = "cell_type", label = TRUE, pt.size = 0.5)
+all_plots = c(plots, plot_color_fix, clusters)
+pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_feature_plots.pdf")), height = 12, width = 25)
+cowplot::plot_grid(plotlist = all_plots, nrow = 3, ncol = 5)
+dev.off()
+
+
+# ------------------------------- heatmaps -----------------------------------
+
+
+for (node in nodes){
+  print(node)
+  pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_", node, ".pdf")), height = 11, width = 8)
+  
+  og_gain <<- focal_nodes$ogs[focal_nodes$name == node]
+  
+  heatmaps(acropora_ref, og_gain, node, ogmap = acropora_map, deepfri_met, threshold = 1) 
+
+  dev.off()
+}
+
+# ---------------------------- gene expression and variation -----------------------
+
+pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_variance.pdf")), height = 8, width = 8)
+var_df <- variance(Au, aurelia_map, nodes, genus)
+dev.off()
+
+# is there a difference in variation of expression of genes gained at different nodes?
+anova <- aov(variance ~ node, data = var_df)
+summary(anova)
+TukeyHSD(anova)
+
+# is there a difference in mean expression of genes gained at different nodes?
+anova <- aov(gmean ~ node, data = var_df)
+summary(anova)
+TukeyHSD(anova)
+
+# --------------------------- save counts for cNMF ------------------------
+# only need to run once
+counts_mat <- GetAssayData(Au, assay = "SCT", layer = "data")
+writeMM(counts_mat, file.path(dir, "matrix.mtx"))
+writeLines(rownames(counts_mat), file.path(dir, "features.tsv"))
+writeLines(colnames(counts_mat), file.path(dir, "barcodes.tsv"))
+
+```
+
+
+```{r nematostella, eval = FALSE}
+dir = file.path(sc_dir, "nematostella")
+
+# ----------------------------- load nematostella seurat data --------------------------
+
+Nv <- readRDS(file.path(dir,"nv_polyp.Rds"))
+nematostella_map <- read.table(file.path(dir, "og_map.tsv"))
+
+
+DimPlot(Nv, reduction = "pca", group.by = "IDs", label = TRUE, pt.size = 0.5)
+DimPlot(Nv, reduction = "umap", group.by = "IDs", label = TRUE, pt.size = 0.5)
+DimPlot(Nv, reduction = "tsne", group.by = "IDs", label = TRUE, pt.size = 0.5)
+
+# --------------------------------- make ref df / setup --------------------------------
+file_path <- file.path(dir, "12983_2024_529_MOESM2_ESM.xlsx")
+sheet_names <- readxl::excel_sheets(file_path)
+all_sheets_data <- lapply(sheet_names, readxl::read_excel, path = file_path)
+names(all_sheets_data) <- sheet_names
+nematostella_ref <- all_sheets_data[["AllDEGs"]]
+
+# really annoying way to get cluster -> cell_type maps
+cell_types <- data.frame(cluster = Nv@meta.data[["ID.separate"]], cell_type = Nv@meta.data[["IDs"]]) %>% unique() %>% 
+  group_by(cluster) %>%
+  mutate(cell_type = if ("neuroglandular" %in% cell_type & "neuronal" %in% cell_type) "neuroglandular" else cell_type) %>%
+  ungroup() %>% 
+  mutate(cell_type = ifelse(cell_type == "mat.cnido", "cnidocyte", cell_type)) %>% unique() %>% 
+  mutate(cell_type = ifelse(grepl("pharyng", cluster), "pharyngeal.ect", cell_type)) %>% unique() %>% 
+  mutate(cell_type = ifelse(grepl("epith", cluster), "epithelia.ect", cell_type)) %>% unique() %>% 
+  mutate(cell_type = ifelse(grepl("early.ect", cluster), "epithelia.ect", cell_type)) %>% unique() %>% 
+  mutate(cell_type = ifelse(grepl("apical", cluster), "pharyngeal.ect", cell_type)) %>% unique() %>% 
+  mutate(cell_type = ifelse(grepl("Mitotic", cluster), "pSC", cell_type)) %>% unique() %>% 
+  mutate(cell_type = ifelse(grepl("pSC.PGC.NPC", cluster), "pSC", cell_type)) %>% unique() %>% 
+  mutate(cell_type = ifelse(grepl("pSC.PGC.PGC", cluster), "PGCs", cell_type)) %>% unique() %>% 
+  mutate(cell_type = ifelse(grepl("sperm", cluster), "PGCs", cell_type)) %>% unique() %>% 
+  mutate(cell_type = ifelse(grepl("oocyte", cluster), "PGCs", cell_type)) %>% unique() 
+
+nematostella_ref <- merge(nematostella_ref, cell_types, by = "cluster")
+
+nematostella_ref <- nematostella_ref %>% dplyr::select(gene,cell_type,avg_log2FC) %>% 
+  group_by(gene, cell_type) %>%
+  summarise(avg_log2FC = mean(avg_log2FC, na.rm = TRUE), .groups = "drop") %>% 
+  pivot_wider(.,names_from = cell_type,values_from = avg_log2FC, values_fill = 0)  %>%
+  tibble::column_to_rownames(var="gene")
+
+
+nodes <- c("cnid", "anth", "anth2", "hex", "act")
+
+plots(Nv, nematostella_map, nodes, bins = 16, "umap", nematostella_ref, genus = "nematostella")
+
+```
+
+# 4. old code
+```{r variance_old}
+# finds the variation scores for genes gained at each node
+variance <- function(seurat_obj, ogmap, nodes, genus) {
+  
+  # get variance scores from SCTransform
+  hvf_info <- HVFInfo(seurat_obj[["SCT"]], method = 'sct')
+  hvf_info <- as.data.frame(hvf_info)
+  
+  var_df <- data.frame(gene = character(), variance = numeric(), gmean = numeric(), node = character(), genus = character())
+  
+  # subset the hvf_info by genes gained at each node and add to var_df with node and genus columns
+  for (node in nodes) {
+    ogs_gained <- focal_nodes$ogs[focal_nodes$name == node]
+    
+    hvf_subset <- hvf_info %>% rownames_to_column("gene")
+  
+    gene_gains <- filter(ogmap, og %in% unlist(ogs_gained)) %>% 
+      pull(sc_ID)
+  
+    hvf_subset <- filter(hvf_subset, gene %in% gene_gains) %>% 
+      select(gene, variance, gmean) %>% 
+      mutate(node = node, genus = genus)
+    
+    var_df <- rbind(var_df, hvf_subset)
+    
+  }
+  
+  # variance plots
+  v1 <- ggplot(var_df, aes(x = node, y = variance)) +
+    geom_violin()
+  
+  v2 <- ggplot(var_df, aes(x = node, y = variance)) +
+    geom_boxplot()
+  
+  v3 <- ggplot(var_df, aes(x = node, y = log10(variance))) +
+    geom_violin()
+  
+  v4 <- ggplot(var_df, aes(x = node, y = log10(variance))) +
+    geom_boxplot()
+  
+  print(cowplot::plot_grid(v1,v2,v3,v4,nrow = 2, ncol = 2))
+  
+  
+  # gmean plots
+  m1 <- ggplot(var_df, aes(x = node, y = gmean)) +
+    geom_violin()
+  
+  m2 <- ggplot(var_df, aes(x = node, y = gmean)) +
+    geom_boxplot()
+  
+  m3 <- ggplot(var_df, aes(x = node, y = log10(gmean))) +
+    geom_violin()
+  
+  m4 <- ggplot(var_df, aes(x = node, y = log10(gmean))) +
+    geom_boxplot()
+  
+  print(cowplot::plot_grid(m1,m2,m3,m4,nrow = 2, ncol = 2))
+  
+  return(var_df)
+}
+
+
+```
+
+```{r old_nematostella_code}
+# ------------------------------ feature plots -------------------------------
+# we will be using the RNA assay for the featureplots because it has all the genes, but the expression needs to be normalized
+DefaultAssay(Nv) <- "RNA"
+NormalizeData(Nv, normalization.method = "LogNormalize")
+
+plot_color_fix <- list()
+plots <- list()
+minimums <- list()
+maximums <- list()
+
+for (node in nodes){
+  print(node)
+  og_gain <- focal_nodes$ogs[focal_nodes$name == node]
+  
+  plot_output <- feature_plots(Nv, ogs_gained = og_gain, ogmap = nematostella_map, node = node, bins = 16, seurat = TRUE, reduction = "umap", color_norm = FALSE, border = node_cols[node])
+  
+  plots <- append(plots, plot_output[[1]])
+  minimums <- append(minimums, plot_output[[2]])
+  maximums <- append(maximums, plot_output[[3]])
+}
+min = min(unlist(minimums))
+max = max(unlist(maximums))
+
+for (node in nodes){
+  print(node)
+  og_gain <- focal_nodes$ogs[focal_nodes$name == node]
+  
+  plot_output <- feature_plots(Nv, ogs_gained = og_gain, ogmap = nematostella_map, node = node, bins = 16, seurat = TRUE, reduction = "umap", color_norm = TRUE, min = min, max = max, border = node_cols[node])
+  
+  plot_color_fix <- append(plot_color_fix, plot_output[[1]])
+  minimums <- append(minimums, plot_output[[2]])
+  maximums <- append(maximums, plot_output[[3]])
+  legend <- plot_output[[4]]
+}
+clusters <- DimPlot(Nv, reduction = "umap", group.by = "IDs", pt.size = 0.25)
+all_plots = c(plots, clusters, plot_color_fix, legend)
+pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_feature_plots.pdf")), height = 8, width = 24)
+cowplot::plot_grid(plotlist = all_plots, nrow = 2, ncol = 6)
+dev.off()
+
+# ------------------------------- heatmaps -----------------------------------
+
+
+for (node in nodes){
+  print(node)
+  pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_", node, ".pdf")), height = 11, width = 8)
+  
+  og_gain <- focal_nodes$ogs[focal_nodes$name == node]
+  
+  heatmaps(nematostella_ref, og_gain, node, ogmap = nematostella_map, deepfri_met, threshold = 0.5) 
+
+  dev.off()
+}
+
+# ---------------------------- gene expression and variation -----------------------
+
+
+pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_variance.pdf")), height = 8, width = 8)
+
+genes <- var_plot(Nv, nematostella_map, nodes)
+
+dev.off()
+
+# is there a difference in variation of expression of genes gained at different nodes?
+anova <- aov(var ~ gain_node, data = genes)
+summary(anova)
+TukeyHSD(anova)
+
+# is there a difference in mean expression of genes gained at different nodes?
+anova <- aov(mean ~ gain_node, data = genes)
+summary(anova)
+TukeyHSD(anova)
+
+genes %>% group_by(gain_node) %>% 
+  summarise(mean_mean = mean(mean),
+            sd_mean = sd(mean), 
+            mean_var = mean(var), 
+            sd_var = sd(var))
+
+```
