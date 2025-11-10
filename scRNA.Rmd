@@ -10,6 +10,7 @@ library(tibble)
 library(cowplot)
 library(Matrix)
 library(Polychrome)
+library(phytools)
 
 if(!require(DropletUtils)){
   BiocManager::install("DropletUtils")
@@ -47,9 +48,16 @@ library(paletteer)
 library(Seurat)
 library(SeuratData)
 library(tidyseurat)
+library(geiger)
 ```
 
 ```{r import_data}
+
+need_cNMF <- FALSE
+need_SAMap <- FALSE
+run_feature_plot <- TRUE
+run_heatmaps <- FALSE
+run_variance_plots <- TRUE
 
 sc_dir = "/Users/oliviatatro/Downloads/surf/single_cell"
 # load loss_gain table
@@ -90,6 +98,23 @@ rm(bp)
 ```
 
 ```{r setup_focal_nodes}
+load("../orthodollo/og4dollo.Rdata")
+rm(ogdf)
+
+# view the tip nums to compute gains at tips 
+tip_nums <- tr1[["tip.label"]]
+tip_nums
+
+tr2<-read.tree("../orthodollo/cnidarian_timetree.tre") 
+root_node <- getMRCA(tr2, c("Mnemiopsis", "Lampea", "Coeloplana"))
+tr2<-read.tree("../orthodollo/cnidarian_timetree.tre") %>% phytools::reroot(., node.number = root_node ,position=0.01) %>% ladderize() 
+
+tr2<-phytools::rescale(tr2,model="depth",
+    depth=650)
+bt <- branching.times(tr2)
+bt <- data.frame(node_time = as.numeric(names(bt)), age = as.numeric(bt))
+
+node_labs <- read.csv("../orthodollo/cnid_node_labels copy.csv")
 
 # ----------------------- get gained ogs by node -----------------
 # build focal_nodes df:
@@ -97,8 +122,21 @@ rm(bp)
   # name: abreviated node name (eg "anth")
   # ogs: list of ogs gained at node
 focal_nodes <- data.frame(
-  node = c(132, 133, 103, 104, 129, 130, 105, 116, 163, 159, 134, 137, 120, 108, 102, 150), 
-  name = c("anth", "anth2", "endomed", "med", "endo", "myx", "hyd", "acr", "oct", "cer", "hex", "scler", "scyph", "siph", "cnid", "act")
+  node = c(132, 133, 103, 104, 129, 
+           130, 105, 116, 163, 159, 
+           134, 137, 120, 108, 102, 
+           150,   2,  22,  87,  88, 
+           90,   74,  42,  11), 
+  name = c("anth", "anth2", "endomed", "med", "endo", 
+           "myx", "hyd", "acr", "oct", "cer", 
+           "hex", "scler", "scyph", "siph", "cnid", 
+           "act", "acropora", "nematostella", "hydra", "clytia",
+           "turritopsis", "aurelia", "xenia", "stylophora"),
+  full_name = c("Anthozoa", "Ceriantheria + Hexacorallia", "Endocnidozoa + Medusozoa", "Medusozoa", "Endocnidozoa",
+                "Myxozoa", "Hydrozoa", "Acraspeda", "Octocorallia", "Ceriantheria", 
+                "Hexacorallia", "Scleractinia", "Scyphozoa", "Siphonophora", "Cnidaria",
+                "Actinaria", "Acropora", "Nematostella", "Hydra", "Clytia", 
+                "Turritopsis", "Aurelia", "Xenia", "Stylophora")
   )
 print("Extracting OG gains for focal nodes from the orthodollo lossgain table...")
 focal_nodes$ogs <- lapply(focal_nodes$node, function(n){
@@ -106,18 +144,27 @@ focal_nodes$ogs <- lapply(focal_nodes$node, function(n){
 })
 rm(lossgain.table)
 
-node_cols <- palette36.colors(16)
-names(node_cols) <- focal_nodes$name
+node_ages <- merge(node_labs, bt, by = "node_time") %>% 
+  merge(focal_nodes, by.x = "node_number", by.y = "node") %>% 
+  select(name, age)
 
+rm(bt)
+rm(tr1);rm(tr2)
+rm(node_labs)
+rm(tip_nums)
+
+node_cols <- c("#E7468E", "#F63C35","#DA71FE", "#4991FE", "#8E10D2",
+               "#590D8F",  "#2448D8", "#2ED9FF", "#AF0623", "",
+               "#FA8018","#B1E923","#1FD295", "","#F4A7DE",
+               "#F6E01A", "grey20", "grey20","grey20","grey20",
+               "grey20","grey20","grey20","grey20")
+names(node_cols) <- focal_nodes$name
+node_cols
 ```
 
 # 2. Functions
 
 ```{r feature_plot_function}
-#ogs_gained <- focal_nodes$ogs[focal_nodes$name == "cnid"]
-#sc_obj <- Tr
-#ogmap <- aurelia_map
-#node <- "cnid"
 
 feature_plots <- function(sc_obj, ogs_gained, ogmap, node, bins = 24, seurat = TRUE, reduction, color_norm = TRUE, min = 0, max = 1, border = "black") {
   genes_gained <- filter(ogmap, og %in% unlist(ogs_gained)) %>% 
@@ -139,7 +186,7 @@ feature_plots <- function(sc_obj, ogs_gained, ogmap, node, bins = 24, seurat = T
   score_vals <- seurat_obj@meta.data$node_gains1
   minimum <- min(score_vals)
   maximum <- max(score_vals)
-
+  
   if (color_norm) {
     feature_plot <- FeaturePlot(seurat_obj, features = "node_gains1", reduction = reduction) + 
       scale_colour_gradientn(colors = c("yellow", "deeppink1", "blue"), limits = c(min, max)) +
@@ -147,11 +194,15 @@ feature_plots <- function(sc_obj, ogs_gained, ogmap, node, bins = 24, seurat = T
       ggtitle(paste(NULL)) +
       theme(legend.position = "none")
   } else {
-    feature_plot <- FeaturePlot(seurat_obj, features = "node_gains1", reduction = reduction) + 
+    feature_plot <- 
+      FeaturePlot(seurat_obj, features = "node_gains1", reduction = reduction) + 
       scale_colour_gradientn(colors = c("yellow", "deeppink1", "blue")) +
       theme(plot.background = element_rect(color = border, fill = NA, size = 3)) +
-      ggtitle(NULL)
+      ggtitle(NULL) 
   }
+
+  feature_plot <- feature_plot + coord_cartesian(clip = "off") +
+    annotate("label", x = Inf, y = Inf, label = focal_nodes$full_name[focal_nodes$name == node], fill = "white", color = node_cols[node], size = 5, hjust = 1)
   
   legend <- FeaturePlot(seurat_obj, features = "node_gains1", reduction = reduction) + 
       scale_colour_gradientn(colors = c("yellow", "deeppink1", "blue"), limits = c(min, max))+
@@ -408,16 +459,17 @@ plots <- function(seurat_obj, ogmap, nodes, bins = 24, reduction, ref, genus, ce
     maximums <- list()
     
     print("Creating featurePlots...")
-    for (node in nodes){
+    for (node in nodes[1:length(nodes) - 1]){
       print(node)
       og_gain <- focal_nodes$ogs[focal_nodes$name == node]
       
-      plot_output <- feature_plots(seurat_obj, ogs_gained = og_gain, ogmap = ogmap, node = node, bins = bins, seurat = TRUE, reduction = reduction, color_norm = FALSE, border = node_cols[node])
-      print("done")
+      try({
+        plot_output <- feature_plots(seurat_obj, ogs_gained = og_gain, ogmap = ogmap, node = node, bins = bins, seurat = TRUE, reduction = reduction, color_norm = FALSE, border = node_cols[node])
       
       plots <- append(plots, plot_output[[1]])
       minimums <- append(minimums, plot_output[[2]])
       maximums <- append(maximums, plot_output[[3]])
+      })
     }
     min = min(unlist(minimums))
     max = max(unlist(maximums))
@@ -426,20 +478,21 @@ plots <- function(seurat_obj, ogmap, nodes, bins = 24, reduction, ref, genus, ce
       print(node)
       og_gain <- focal_nodes$ogs[focal_nodes$name == node]
       
-      plot_output <- feature_plots(seurat_obj, ogs_gained = og_gain, ogmap = ogmap, node = node, bins = 16, seurat = TRUE, reduction = reduction, color_norm = TRUE, min = min, max = max, border = node_cols[node])
+      try({plot_output <- feature_plots(seurat_obj, ogs_gained = og_gain, ogmap = ogmap, node = node, bins = 16, seurat = TRUE, reduction = reduction, color_norm = TRUE, min = min, max = max, border = node_cols[node])
       
       plot_color_fix <- append(plot_color_fix, plot_output[[1]])
       minimums <- append(minimums, plot_output[[2]])
       maximums <- append(maximums, plot_output[[3]])
       legend <- plot_output[[4]]
+      })
     }
     
     clusters <- DimPlot(seurat_obj, reduction = reduction, group.by = cell_types, pt.size = 0.25)
     all_plots = c(plots, clusters, plot_color_fix, legend)
     
-    feature_plot <- cowplot::plot_grid(plotlist = c(clusters, plot_color_fix, legend), nrow = 1, rel_widths = c(1.7, rep(1, length(plot_color_fix)), 0.05))
+    feature_plot <- cowplot::plot_grid(plotlist = c(clusters, plot_color_fix, legend), nrow = 1, rel_widths = c(1.5, rep(1, length(plot_color_fix)), 0.05))
     
-    pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_feature_plots.pdf")), height = 4, width = (length(nodes) + 1.7 + 0.05)*4)
+    pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_feature_plots.pdf")), height = 4, width = (length(nodes) + 1.5 + 0.05)*4)
     print(feature_plot)
     dev.off()
   }
@@ -455,7 +508,7 @@ plots <- function(seurat_obj, ogmap, nodes, bins = 24, reduction, ref, genus, ce
       
       og_gain <- focal_nodes$ogs[focal_nodes$name == node]
       
-      print(heatmaps(ref, og_gain, node, ogmap = ogmap, deepfri_met, threshold = 0.5)) 
+      try(print(heatmaps(ref, og_gain, node, ogmap = ogmap, deepfri_met, threshold = 0.5))) 
   
     }
     dev.off()
@@ -467,7 +520,7 @@ plots <- function(seurat_obj, ogmap, nodes, bins = 24, reduction, ref, genus, ce
     print("Creating variance_plots")
     pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_variance.pdf")), height = 8, width = 10)
     
-    genes <- var_plot(seurat_obj, ogmap, nodes)
+    try({genes <- var_plot(seurat_obj, ogmap, nodes)})
     
     dev.off()
     
@@ -498,7 +551,7 @@ plots <- function(seurat_obj, ogmap, nodes, bins = 24, reduction, ref, genus, ce
 
 # 3. Species
 
-```{r turritopsis, eval = FALSE}
+```{r turritopsis}
 dir = file.path(sc_dir, "turritopsis")
 
 # ----------------------------- load turritopsis medusa data from the compare species Rds ------------------
@@ -536,7 +589,7 @@ if (file.exists(file.path(dir, "turritopsis_medusa.Rds"))) {
 
 # -------------------------- save for cNMF and SAMap ---------------------------
 DefaultAssay(Tr) <- "RNA"
-if (!file.exists(file.path(dir,"cNMF", "matrix.mtx"))){
+if (!file.exists(file.path(dir,"cNMF", "matrix.mtx")) & need_cNMF){
   dir.create(file.path(dir,"cNMF"))
   counts_mat <- Tr@assays[["RNA"]]@counts
   writeMM(counts_mat, file.path(dir,"cNMF", "matrix.mtx"))
@@ -546,7 +599,7 @@ if (!file.exists(file.path(dir,"cNMF", "matrix.mtx"))){
 }
 
 # counts for samap (will need to read in as anndata object in python) 
-if (!file.exists(file.path(dir,"SAMap", "matrix.mtx"))) {
+if (!file.exists(file.path(dir,"SAMap", "matrix.mtx")) & need_SAMap) {
   cnid_only <- subset(Tr, cell_type %in% c("nematoblast", "nematocyst"))
   cnid_only <- SCTransform(cnid_only)
   cnid_only <- RunPCA(cnid_only, verbose = FALSE)
@@ -616,7 +669,8 @@ turritopsis_ref <- turritopsis_ref %>% pivot_wider(.,names_from = cell_type,valu
 
 
 # -------------------------------------RUN PLOTS-------------------------------
-nodes <- c("cnid", "endomed", "med", "acr", "scyph")
+nodes <- c("cnid", "endomed", "med", "hyd", "turritopsis")
+
 dir.create(file.path("/Users/oliviatatro/Downloads/surf/figures", "turritopsis"))
 
 # we will be using the RNA assay for the featureplots because it has all the genes, but the expression needs to be normalized
@@ -624,7 +678,7 @@ DefaultAssay(Tr) <- "RNA"
 Tr <- NormalizeData(Tr, normalization.method = "LogNormalize")
 
 # seurat object used aurelia gene ids 
-Tr_feature <- plots(Tr, aurelia_map, nodes, bins = 16, "tsne", turritopsis_ref, genus = "turritopsis", cell_types = "cell_type")
+Tr_feature <- plots(Tr, aurelia_map, nodes, bins = 16, "tsne", turritopsis_ref, genus = "turritopsis", cell_types = "cell_type", features = run_feature_plot, heat = run_heatmaps, varplot = run_variance_plots)
 
 rm(Tr)
 rm(Tr_feature)
@@ -652,24 +706,56 @@ if (file.exists(file.path(dir, "seurat_aurelia.Rds"))) {
   ###extract medusa of Aurelia coerulea matrix
   Au<-TrAu[,TrAu$orig.ident%in%c("HYCT")]
   rm(TrAu)
+  
+  Au <- subset(Au, subset = nFeature_RNA > 200 & nFeature_RNA < 2500)
 
   # rerunning SCTransform to have control over params
   DefaultAssay(Au) <- "RNA"
-  Au <- SCTransform(Au, return.only.var.genes = FALSE, variable.features.n = 20000)
+  Au <- SCTransform(Au)
   #VariableFeatures(Au) <- head(VariableFeatures(Au), 1000)
   
   Au <- RunPCA(Au)
-  ElbowPlot(Au, ndims = 50)
-  Au <- RunUMAP(Au, dims = 1:30)
-  Au <- RunTSNE(Au, dims = 1:30)
+  Au <- RunUMAP(Au, dims = 1:15)
+  Au <- RunTSNE(Au, dims = 1:15)
   
-
   saveRDS(Au, file = file.path(dir, "seurat_aurelia.Rds"))
 }
 
 DimPlot(Au, reduction = "pca", label = TRUE, pt.size = 0.5)
 DimPlot(Au, reduction = "umap", label = TRUE, pt.size = 0.5)
 DimPlot(Au, reduction = "tsne", label = TRUE, pt.size = 0.5)
+
+if (!file.exists(file.path(dir,"cNMF", "matrix.mtx")) & need_cNMF){
+  dir.create(file.path(dir,"cNMF"))
+  counts_mat <- Tr@assays[["RNA"]]@counts
+  writeMM(counts_mat, file.path(dir,"cNMF", "matrix.mtx"))
+  writeLines(rownames(Tr), file.path(dir,"cNMF", "features.tsv"))
+  writeLines(colnames(Tr), file.path(dir,"cNMF", "barcodes.tsv"))
+  rm(counts_mat)
+}
+
+# counts for samap (will need to read in as anndata object in python) 
+if (!file.exists(file.path(dir,"SAMap", "matrix.mtx")) & need_SAMap) {
+  cnid_only <- subset(Tr, cell_type %in% c("nematoblast", "nematocyst"))
+  cnid_only <- SCTransform(cnid_only)
+  cnid_only <- RunPCA(cnid_only, verbose = FALSE)
+  cnid_only <- FindNeighbors(cnid_only, reduction = "pca", dims = 1:30)
+  DimPlot(cnid_only, reduction = "pca")
+  cnid_only <- FindClusters(cnid_only, resolution = 0.1)
+  cnid_only <- RunUMAP(cnid_only, reduction = "pca", dims = 1:30, verbose = FALSE)
+  cnid_only <- RunTSNE(cnid_only, reduction = "pca", dims = 1:30, verbose = FALSE)
+  DimPlot(cnid_only, reduction = "umap", group.by = "cell_type", label = TRUE, pt.size = 0.5)
+  DimPlot(cnid_only, reduction = "tsne", group.by = "cell_type", label = TRUE, pt.size = 0.5)
+  
+  dir.create(file.path(dir,"SAMap"))
+  cnid_counts_mat <- cnid_only@assays[["RNA"]]@counts
+  writeMM(cnid_counts_mat, file.path(dir,"SAMap", "matrix.mtx"))
+  # features and cells from the RNA assay stores the features adn cells as logical maps because of the integration, but we are just concerned with the gene names adn cell barcodes, so that is why I am accessing it as rownames(cnid_only@assays[["RNA"]]@features) and @cells 
+  writeLines(rownames(cnid_only), file.path(dir,"SAMap", "features.tsv"))
+  writeLines(colnames(cnid_only), file.path(dir,"SAMap", "barcodes.tsv"))
+  rm(cnid_counts_mat)
+  rm(cnid_only)
+}
 
 # --------------------------------- make ref df / setup --------------------------------
 trau_cells<-read.csv(file.path(sc_dir, "turritopsis", "cell_codes.txt")) #expanded cell descriptions from supplement's original table
@@ -684,71 +770,24 @@ colnames(aurelia_ref) <- c("cell_type", "gene", "avg_log2FC")
 aurelia_ref <- aurelia_ref %>% pivot_wider(.,names_from = cell_type,values_from = avg_log2FC,values_fill = 0)  %>%
   tibble::column_to_rownames(var="gene")
 
-nodes <- c("cnid", "endomed", "med", "acr", "scyph")
-genus <- "aurelia"
-dir.create(file.path("/Users/oliviatatro/Downloads/surf/figures", genus))
+# -------------------------------------RUN PLOTS-------------------------------
+nodes <- c("cnid", "endomed", "med", "acr", "scyph", "aurelia")
 
-# ------------------------------ feature plots -------------------------------
-plot_color_fix <- list()
-plots <- list()
+dir.create(file.path("/Users/oliviatatro/Downloads/surf/figures", "turritopsis"))
 
-for (node in nodes){
-  print(node)
-  og_gain <- focal_nodes$ogs[focal_nodes$name == node]
-  
-  new_plot <- feature_plots(Au, ogs_gained = og_gain, ogmap = aurelia_map, node = node, bins = 16, seurat = TRUE, reduction = "tsne", color_norm = FALSE)
-  plots <- append(plots, new_plot)
-  
-  new_plot <- feature_plots(Au, ogs_gained = og_gain, ogmap = aurelia_map, node = node, bins = 16, seurat = TRUE, reduction = "tsne", color_norm = TRUE, min = -0.1, max = 0.25)
-  plot_color_fix <- append(plot_color_fix, new_plot)
-}
-clusters <- DimPlot(Au, reduction = "tsne")
-all_plots = c(plots, plot_color_fix, clusters)
-pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_feature_plots.pdf")), height = 12, width = 25)
-cowplot::plot_grid(plotlist = all_plots, nrow = 3, ncol = 5)
-dev.off()
+# we will be using the RNA assay for the featureplots because it has all the genes, but the expression needs to be normalized
+DefaultAssay(Au) <- "RNA"
+Au <- NormalizeData(Au, normalization.method = "LogNormalize")
 
+# seurat object used aurelia gene ids 
+Au_feature <- plots(Au, aurelia_map, nodes, bins = 16, "tsne", aurelia_ref, genus = "aurelia", cell_types = "cell_type", features = run_feature_plot, heat = run_heatmaps, varplot = run_variance_plots)
 
-# ------------------------------- heatmaps -----------------------------------
-
-
-for (node in nodes){
-  print(node)
-  pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_scRNA_", node, ".pdf")), height = 11, width = 8)
-  
-  og_gain <<- focal_nodes$ogs[focal_nodes$name == node]
-  
-  heatmaps(aurelia_ref, og_gain, node, ogmap = aurelia_map, deepfri_met, threshold = 1) 
-
-  dev.off()
-}
-
-# ---------------------------- gene expression and variation -----------------------
-
-pdf(file.path("/Users/oliviatatro/Downloads/surf/figures", genus, paste0(genus, "_variance.pdf")), height = 8, width = 8)
-var_df <- variance(Au, aurelia_map, nodes, genus)
-dev.off()
-
-# is there a difference in variation of expression of genes gained at different nodes?
-anova <- aov(variance ~ node, data = var_df)
-summary(anova)
-TukeyHSD(anova)
-
-# is there a difference in mean expression of genes gained at different nodes?
-anova <- aov(gmean ~ node, data = var_df)
-summary(anova)
-TukeyHSD(anova)
-
-# --------------------------- save counts for cNMF ------------------------
-# only need to run once
-#counts_mat <- GetAssayData(Au, assay = "SCT", layer = "data")
-#writeMM(counts_mat, file.path(dir, "matrix.mtx"))
-#writeLines(rownames(counts_mat), file.path(dir, "features.tsv"))
-#writeLines(colnames(counts_mat), file.path(dir, "barcodes.tsv"))
+rm(Au)
+rm(Au_feature)
 
 ```
 
-```{r acropora, eval = FALSE}
+```{r acropora}
 dir = file.path(sc_dir, "acropora")
 
 # ----------------------------- load acropora seurat data --------------------------
@@ -759,7 +798,7 @@ DimPlot(Am, reduction = "umap", group.by = "cell_type", label = TRUE, pt.size = 
 DimPlot(Am, reduction = "tsne", group.by = "cell_type", label = TRUE, pt.size = 0.5)
 
 # counts for cNMF 
-if (!file.exists(file.path(dir,"cNMF", "matrix.mtx"))){
+if (!file.exists(file.path(dir,"cNMF", "matrix.mtx")) & need_cNMF){
   dir.create(file.path(dir,"cNMF"))
   counts_mat <- cbind(Am@assays[["RNA"]]@layers[["counts.1"]], Am@assays[["RNA"]]@layers[["counts.2"]])
   writeMM(counts_mat, file.path(dir,"cNMF", "matrix.mtx"))
@@ -770,7 +809,7 @@ if (!file.exists(file.path(dir,"cNMF", "matrix.mtx"))){
 
 
 # counts for samap (will need to read in as anndata object in python) 
-if (!file.exists(file.path(dir,"SAMap", "matrix.mtx"))) {
+if (!file.exists(file.path(dir,"SAMap", "matrix.mtx")) & need_SAMap) {
   cnid_only <- subset(Am, cell_type == "Cnidocytes")
   cnid_only <- SCTransform(cnid_only)
   cnid_only <- RunPCA(cnid_only, verbose = FALSE)
@@ -791,27 +830,6 @@ if (!file.exists(file.path(dir,"SAMap", "matrix.mtx"))) {
   rm(cnid_counts_mat)
   rm(cnid_only)
 }
-
-
-if(!file.exists(file.path(dir, "Am_ctrl.Rds"))){
-    counts <- Seurat::ReadMtx(mtx = file.path(dir, "Control_matrix.mtx.gz"), cells = file.path(dir,"Control_barcodes.tsv.gz"), features = file.path(dir, "Control_features.tsv.gz"), feature.column = 1)
-  Am_ctrl <- Seurat::CreateSeuratObject(counts = counts)
-  Am_ctrl <- subset(seurat_object, subset = nFeature_RNA > 200 & nFeature_RNA < 2500)
-  Am_ctrl <- SCTransform(Am_ctrl)
-  Am_ctrl <- RunPCA(Am_ctrl)
-  Am_ctrl <- RunUMAP(Am_ctrl, reduction = "pca", dims = 1:30)
-  Am_ctrl <- RunTSNE(Am_ctrl, reduction = "pca", dims = 1:30)
-  
-  Am_ctrl$cell_type <- Am@meta.data[["cell_type"]][1:ncol(Am_ctrl)]
-  
-  DimPlot(Am_ctrl, reduction = "pca", group.by = "cell_type", label = TRUE, pt.size = 0.5)
-  DimPlot(Am_ctrl, reduction = "umap", group.by = "cell_type", label = TRUE, pt.size = 0.5)
-  DimPlot(Am_ctrl, reduction = "tsne", group.by = "cell_type", label = TRUE, pt.size = 0.5)
-  saveRDS(Am_ctrl, file = file.path(dir, "Am_ctrl.Rds"))
-} else {
-  Am_ctrl <- readRDS(file.path(dir, "Am_ctrl.Rds"))
-}
-
 
 # --------------------------------- make ref df / setup --------------------------------
 file_path <- file.path(dir, "42003_2025_8089_MOESM4_ESM.xlsx")
@@ -840,10 +858,12 @@ acropora_map <- merge(acropora_map, acropora_map2, by.x = "sc_ID", by.y = "NR_de
   select(-sc_ID) %>% 
   dplyr::rename(sc_ID = gene_id)
 
+acropora_map$sc_ID <- gsub("_", "-", acropora_map$sc_ID)
+
 
 # ------------------------------ RUN PLOTS --------------------------------
 
-nodes <- c("cnid", "anth", "anth2", "hex", "scler")
+nodes <- c("cnid", "anth", "anth2", "hex", "scler", "acropora")
 genus <- "acropora"
 dir.create(file.path("/Users/oliviatatro/Downloads/surf/figures", genus))
 
@@ -851,11 +871,11 @@ dir.create(file.path("/Users/oliviatatro/Downloads/surf/figures", genus))
 DefaultAssay(Am) <- "RNA"
 Am <- NormalizeData(Am, normalization.method = "LogNormalize")
 
-Am_feature <- plots(Am, acropora_map, nodes, bins = 16, "tsne", acropora_ref, genus = "acropora", cell_types = "cell_type")
+Am_feature <- plots(Am, acropora_map, nodes, bins = 16, "tsne", acropora_ref, genus = "acropora", cell_types = "cell_type", features = run_feature_plot, heat = run_heatmaps, varplot = run_variance_plots)
 
 rm(Am)
-rm(Am_ctrl)
 rm(all_sheets_data)
+rm(Am_feature)
 
 ```
 
@@ -904,19 +924,20 @@ nematostella_ref <- nematostella_ref %>% dplyr::select(gene,cell_type,avg_log2FC
   tibble::column_to_rownames(var="gene")
 
 # ------------------------------------RUN PLOTS -----------------------------------
-nodes <- c("cnid", "anth", "anth2", "hex", "act")
+nodes <- c("cnid", "anth", "anth2", "hex", "act", "nematostella")
 
 # we will be using the RNA assay for the featureplots because it has all the genes, but the expression needs to be normalized
 DefaultAssay(Nv) <- "RNA"
 Nv <- NormalizeData(Nv, normalization.method = "LogNormalize")
 
-Nv_feature <- plots(Nv, nematostella_map, nodes, bins = 16, "umap", nematostella_ref, genus = "nematostella", cell_types = "IDs", features = FALSE, heat = FALSE)
+Nv_feature <- plots(Nv, nematostella_map, nodes, bins = 16, "umap", nematostella_ref, genus = "nematostella", cell_types = "IDs", features = run_feature_plot, heat = run_heatmaps, varplot = run_variance_plots)
 
 rm(Nv)
+rm(Nv_feature)
 
 ```
 
-```{r hydra, eval = FALSE}
+```{r hydra}
 dir = file.path(sc_dir, "hydra")
 
 # -------------------------------- read in seurat object -------------------------
@@ -946,7 +967,7 @@ if (!file.exists(file.path(dir, "hydra_seurat.Rds"))) {
 
 # ----------------------------------- save for cNMF and SAMap ---------------------------
 DefaultAssay(Hv) <- "RNA"
-if (!file.exists(file.path(dir,"cNMF", "matrix.mtx"))){
+if (!file.exists(file.path(dir,"cNMF", "matrix.mtx")) & need_cNMF){
   dir.create(file.path(dir,"cNMF"))
   counts_mat <- Hv@assays[["RNA"]]@counts
   writeMM(counts_mat, file.path(dir,"cNMF", "matrix.mtx"))
@@ -956,7 +977,7 @@ if (!file.exists(file.path(dir,"cNMF", "matrix.mtx"))){
 }
 
 # counts for samap (will need to read in as anndata object in python) 
-if (!file.exists(file.path(dir,"SAMap", "matrix.mtx"))) {
+if (!file.exists(file.path(dir,"SAMap", "matrix.mtx")) & need_SAMap) {
   cnid_only <- subset(Hv, cell_type %in% c("nematoblast", "nematocyte"))
   cnid_only <- SCTransform(cnid_only)
   cnid_only <- RunPCA(cnid_only, verbose = FALSE)
@@ -1005,7 +1026,7 @@ rm(cats)
 
 
 # ------------------------------------RUN PLOTS--------------------------------
-nodes <- c("cnid", "endomed", "med", "hyd")
+nodes <- c("cnid", "endomed", "med", "hyd", "hydra")
 dir.create(file.path("/Users/oliviatatro/Downloads/surf/figures", "hydra"))
 
 # we will be using the RNA assay for the featureplots because it has all the genes, but the expression needs to be normalized
@@ -1013,7 +1034,7 @@ DefaultAssay(Hv) <- "RNA"
 Hv <- NormalizeData(Hv, normalization.method = "LogNormalize")
 
 # seurat object used aurelia gene ids 
-Hv_feature <- plots(Hv, hydra_map, nodes, bins = 16, "tsne", hydra_ref, genus = "hydra", cell_types = "cell_type", features = FALSE, heat = FALSE)
+Hv_feature <- plots(Hv, hydra_map, nodes, bins = 16, "tsne", hydra_ref, genus = "hydra", cell_types = "cell_type", features = run_feature_plot, heat = run_heatmaps, varplot = run_variance_plots)
 
 rm(Hv)
 rm(Hv_feature)
@@ -1056,13 +1077,13 @@ xenia_map <- xenia_map %>% select(-Symbol)
 rm(ref)
 
 # ------------------------------------RUN PLOTS--------------------------------
-nodes <- c("cnid", "anth", "oct")
+nodes <- c("cnid", "anth", "oct", "xenia")
 dir.create(file.path("/Users/oliviatatro/Downloads/surf/figures", "xenia"))
 
 # seurat object used aurelia gene ids 
-Xe_feature <- plots(Xe, xenia_map, nodes, bins = 16, "tsne", xenia_ref, genus = "xenia", cell_types = "cell_ids", features = TRUE, heat = FALSE, varplot = TRUE)
+Xe_feature <- plots(Xe, xenia_map, nodes, bins = 16, "tsne", xenia_ref, genus = "xenia", cell_types = "cell_ids", features = run_feature_plot, heat = run_heatmaps, varplot = run_variance_plots)
 
-#rm(Xe)
+rm(Xe)
 rm(Xe_feature)
 
 ```
