@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 
-# command: ./compare.py go_basic.obo eggnog.tsv /mnt/home/plachetzki/omt1027/surf/97_taxa/orthofinder_run/deepfri/deepfri_output/test
+# command: ./compare.py go_basic.obo eggnog.tsv /mnt/home/plachetzki/omt1027/surf/97_taxa/orthofinder_run/deepfri/test
+
+# need to deal with replacements in a similar way to the alt ids
+# need to append the average jaccard index to a string
 
 # ---------------------------------------- import -------------------------------------------
 import argparse
 import os
+import csv
 
 # --------------------------------------- arguments -----------------------------------------
 # user must put in the go.obo file and the output of both eggnog and deepfri
@@ -34,7 +38,7 @@ class Go:
     def __str__(self):
         string = self.id
 
-        if len(self.alt_id) > 0:
+        if len(self.alt_ids) > 0:
             for id in self.alt_ids:
                 string += "/" + id
 
@@ -116,7 +120,7 @@ for file in os.scandir(args.deepfri):
             query = entry[0] # sequence ID
             go = entry[1] # GO term
 
-            annotations.setdefault(query, [set(),set()]) # default to a list of two empty lists. If the query isn't there, it wasn't present in the eggnog data
+            annotations.setdefault(query, [set(),set()]) # default to a list of two empty sets. If the query isn't there, it wasn't present in the eggnog data
             annotations[query][1].add(go)
 
 
@@ -128,23 +132,21 @@ def jaccard(set1, set2):
     return (intersection / union, intersection)
 
 
-# returns the all of the gos up to the number of jumps up on the go hierarchy
-def get_gos(go_str, abs):
-
+# returns all of the gos up to the number of jumps up on the go hierarchy. If abs = -1, the function goes all the way up the tree
+def get_gos(go_str, abs = -1):
     go = gos[go_str]
 
     # base case
     if abs == 0:
         return [go.id]
-
     if len(go.parents) == 0: 
         return [go.id]
 
     parents = go.parents
-
     go_tree = []
 
-    # call get_gos on each parent go with one less abstraction because going up to the parent level is an abstraction itself
+    # call get_gos on each parent go with one less abstraction unless -1 specified
+    new_abs = abs if abs == -1 else abs - 1
     for parent in parents:
         go_tree.extend(get_gos(parent, abs - 1))
 
@@ -165,7 +167,7 @@ def get_gos_from_collection(go_col, abs):
 jaccard_scores = []
 
 # calculate jaccard index and write to output file
-with open(args.out, "w") as output:
+with open("old_output", "w") as output:
     for query, go_sets in annotations.items():
         # skip if it doesn't have annotations from both eggnog and deepfri
         if len(go_sets[0]) == 0 or len(go_sets[1]) == 0:
@@ -180,5 +182,119 @@ with open(args.out, "w") as output:
 
         output.write("\t".join((query, str(len(go_sets[0])), str(len(go_sets[1])), str(jaccard_result[1]), str(jaccard_result[0]))) + "\n")
 
+# ---------------------------- compare annotations by individual deepfri GO ---------------------------
 
-print("Mean Jaccard index:", sum(jaccard_scores) / len(jaccard_scores))
+# give it 2 GOs and determine the number of abstractions from GO 1 to get GO 2 or None if they are not related
+def get_abs(go_str_1, go_str_2, abs = 0):
+
+    go_1 = gos[go_str_1]
+
+    go_2 = gos[go_str_2]
+
+    # return abs if the strings are ==
+    if go_1.id == go_2.id:
+        return abs
+
+    # base case: no more parents
+    if len(go_1.parents) == 0:
+        return None
+
+    parent_abs = []
+    # call get_abs on each parent
+    for parent in go_1.parents:
+        this_abs = get_abs(parent, go_str_2, abs + 1)
+        if not this_abs is None: # won't be able to compare None to int, so we just want to add ints to the list
+            parent_abs.append(this_abs)
+
+    # if there is nothing other than None in the list, then there were no matches. If there is an int and a none, then it will return the min of the ints. This handles the cases where one GO term has multiple parents and some might match. 
+    if len(parent_abs) == 0:
+        return None
+
+    return min(parent_abs)
+
+# calls get_abs in both directions and returns minimum
+def get_min_abs(go_str_1, go_str_2):
+    results = []
+
+    forwards = get_abs(go_str_1, go_str_2)
+    backwards = get_abs(go_str_2, go_str_1)
+
+    if not forwards is None:
+        results.append(forwards)
+
+    if not backwards is None:
+        results.append(backwards)
+
+    if len(results) == 0:
+        return None
+    else:
+        return min(results)
+
+# testing get_min_abs()
+#print("Same GO:", get_min_abs("GO:0000001", "GO:0000001"))
+#print("1 step:", get_min_abs("GO:0000001", "GO:0048308"))
+#print("1 step backwards:", get_min_abs("GO:0048308", "GO:0000001"))
+#print("2 steps:", get_min_abs("GO:0000001", "GO:0006996"))
+#print("Not in same ontology:", get_min_abs("GO:0000001", "GO:0000006"))
+
+# goal: create a tsv that has query, deepfri GO term, # abs to any eggnog GO (or None), highest jaccard index
+# store all jaccards for summary stats
+jaccard_scores = []
+# store all abs_scores for summary stats
+abs_scores = []
+
+# calculate jaccard index and write to output file
+with open(args.out, "w") as output:
+    writer = csv.writer(output, delimiter = "\t")
+    for query, go_sets in annotations.items():
+        # skip if it doesn't have annotations from both eggnog and deepfri
+        if len(go_sets[0]) == 0 or len(go_sets[1]) == 0:
+            continue
+
+        eggnog_trees = []
+        for eggnog_go in go_sets[0]:
+            eggnog_trees.append(get_gos(eggnog_go))
+
+        #print(query, go_sets)
+
+        # iterate through all deepfri GOs 
+        for deepfri_go in go_sets[1]:
+            abstractions = []
+
+            # find the jaccard between the deepfri go and each eggnog go and store the max in max_jaccard
+            jaccards = []
+            deepfri_tree = get_gos(deepfri_go)
+            for eggnog_tree in eggnog_trees:
+                jaccards.append(jaccard(set(eggnog_tree), set(deepfri_tree))[0])
+            max_jaccard = max(jaccards)
+            #print(max_jaccard)
+
+            jaccard_scores.append(max_jaccard)
+
+            # find the lowest number of abstractions between the deepfri go and all eggnog gos
+            for eggnog_go in go_sets[0]:
+                abs_result = get_min_abs(deepfri_go, eggnog_go)
+                if not abs_result is None:
+                    abstractions.append(abs_result)
+
+            min_abstractions = -1 if len(abstractions) == 0 else min(abstractions)
+            #print(min_abstractions)
+
+            if not min_abstractions is None:
+                abs_scores.append(min_abstractions)
+
+            writer.writerow([query, deepfri_go, min_abstractions, max_jaccard])
+
+summary_exists = os.path.exists("compare_summary.txt")
+print(summary_exists)
+
+with open("compare_summary.txt", "a") as summary:
+    writer = csv.writer(summary, delimiter = "\t")
+
+    if not summary_exists: # write header if the file doesnt already exist
+        writer.writerow(["mean_num_abs", "mean_jaccard", "filter"])
+
+    mean_abs = sum(abs_scores)/len(abs_scores)
+    mean_jaccard = sum(jaccard_scores)/len(jaccard_scores)
+    writer.writerow([mean_abs, mean_jaccard, args.deepfri_filter])
+
