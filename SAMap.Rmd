@@ -1,0 +1,248 @@
+
+# 1. Import and setup (run for all species)
+```{r libraries, message=FALSE, warning=FALSE, paged.print=FALSE}
+library(this.path)
+setwd(this.dir())
+library(dplyr)
+library(stringr)
+library(tibble)
+library(cowplot)
+library(Matrix)
+library(Polychrome)
+library(tidyr)
+library(pheatmap)
+library(paletteer)
+library(Seurat)
+library(SeuratData)
+library(tidyseurat)
+library(geiger)
+library(SeuratDisk)
+```
+
+```{r import_data}
+
+# load loss_gain table
+  # columns: OGs
+  # rows: node numbers
+load("/Users/oliviatatro/Downloads/surf/orthodollo/loss_gain_pres_abs_H1.Rds")
+
+# load og mapping files
+  # columns: og and sc_ID
+load("../single_cell/OG_maps.Rdata")
+acropora_map <- read.table("../single_cell/acropora/acropora_map.tsv", sep = "\t")
+nematostella_map <- read.table("../single_cell/nematostella/og_map.tsv")
+xenia_map <- read.table("../single_cell/xenia/og_map.tsv")
+rm(turritopsis_map, stylophora_map, clytia_map)
+
+data <- Read10X(data.dir = "counts", gene.column = 1)
+
+seurat <- CreateSeuratObject(counts = data)
+
+barcodes <- read.table("counts/barcodes.tsv")
+seurat$species <- barcodes$V8
+
+umap <- read.table("counts/umap.tsv")
+umap <- umap[colnames(seurat), ] # reorder to match seurat object
+
+seurat[["umap"]] <- CreateDimReducObject(
+  embeddings = as.matrix(umap),
+  key = "UMAP_",
+  assay = "RNA"
+)
+
+rm(barcodes, data)
+
+DimPlot(seurat, reduction = "umap", group.by = "species") #+NoLegend()
+
+aurelia_map$sc_ID <- paste0("aurelia-", aurelia_map$sc_ID)
+acropora_map$sc_ID <- paste0("acropora-", acropora_map$sc_ID)
+hydra_map$sc_ID <- paste0("hydra-", hydra_map$sc_ID)
+nematostella_map$sc_ID <- paste0("nematostella-", nematostella_map$sc_ID)
+xenia_map$sc_ID <- paste0("xenia-", xenia_map$sc_ID)
+
+ogmap <- rbind(acropora_map, aurelia_map, hydra_map, nematostella_map, xenia_map)
+rm(aurelia_map, acropora_map, hydra_map, nematostella_map, xenia_map)
+
+
+```
+
+```{r setup_focal_nodes}
+
+# ----------------------- get gained ogs by node -----------------
+# build focal_nodes df:
+  # node: node number
+  # name: abreviated node name (eg "anth")
+  # ogs: list of ogs gained at node
+focal_nodes <- data.frame(
+  node = c(132, 133, 103, 104, 129, 
+           130, 105, 116, 163, 159, 
+           134, 137, 120, 108, 102, 
+           150,   2,  22,  87,  88, 
+           90,   74,  42,  11, 106,
+           114, 117, 121, 122, 164, 
+           166, 135, 136, 138, 139,
+           140,  99, 100, 101),
+  name = c("anth", "anth2", "endomed", "med", "endo", 
+           "myx", "hyd", "acr", "oct", "cer", 
+           "hex", "scler", "scyph", "siph", "cnid", 
+           "act", "acropora", "nematostella", "hydra", "clytia",
+           "turritopsis", "aurelia", "xenia", "stylophora", "106",
+           "114", "117", "121", "122", "164", 
+           "166", "135", "136", "138", "139",
+           "140", "myr", "plan", "eum"),
+  full_name = c("Anthozoa", "Ceriantheria + Hexacorallia", "Endocnidozoa + Medusozoa", "Medusozoa", "Endocnidozoa",
+                "Myxozoa", "Hydrozoa", "Acraspeda", "Octocorallia", "Ceriantheria", 
+                "Hexacorallia", "Scleractinia", "Scyphozoa", "Siphonophora", "Cnidaria",
+                "Actinaria", "Acropora", "Nematostella", "Hydra", "Clytia", 
+                "Turritopsis", "Aurelia", "Xenia", "Stylophora", "106",
+                "114", "117", "121", "122", "164", 
+                "166", "135", "136", "138", "139",
+                "140", "Myriazoa", "Planulozoa", "Eumetazoa")
+  )
+print("Extracting OG gains for focal nodes from the orthodollo lossgain table...")
+focal_nodes$ogs <- lapply(focal_nodes$node, function(n){
+  colnames(lossgain.table)[lossgain.table[n, ] == "g"]
+})
+rm(lossgain.table)
+
+node_cols <- c("#E7468E", "#F63C35","#DA71FE", "#4991FE", "#8E10D2",
+               "#590D8F",  "#2448D8", "#2ED9FF", "#AF0623", "",
+               "#FA8018","#B1E923","#1FD295", "","#F4A7DE",
+               "#F6E01A", "grey20", "grey20","grey20","grey20",
+               "grey20","grey20","grey20","grey20", "grey20",
+               "grey20","grey20","grey20","grey20", "grey20",
+               "grey20","grey20","grey20","grey20", "grey20",
+               "grey20", "grey20","grey20","grey20")
+names(node_cols) <- focal_nodes$name
+
+```
+
+# 2. Feature plots
+
+```{r feature_plot}
+cell_types <- read.table("cell_types.tsv", header = TRUE)
+
+unique(cell_types$cell_type)
+
+cell_categories <- data.frame(old = unique(cell_types$cell_type), 
+           new = c("Gland cell",        "Cnidocyte",         "Immune cell",    "Stem cell",    "Neuron", 
+                   "Cnidoblast",        "Hair cell",         "Gastrodermis",   "Muscle",       "Mesoglea",
+                   "Ectoderm",          "Neuron",            "Calicoblast",    "Ectoderm",     "Gastrodermis",
+                   "Alga-hosting cell", "Progenitor",        "Gland cell",     "Cnidocyte",    "Digestive Filament",
+                   "Immune cell",       "Ectoderm",          "Muscle",        "Immune cell",  "Epithelial Ectoderm",
+                   "Cnidocyte",         "Ectoderm",          "Stem cell",      "Neuron",       "Cnidoblast",
+                   "Gland cell",        "Muscle",            "Neuroglandular", "Germ cell",    "Stem cell",
+                   "Head",              "Foot",              "Gland cell",     "Battery cell", "Stem cell",
+                   "Basal disk",        "Tentacle",          "Neuroglandular", "Gland cell",   "Cnidocyte",
+                   "Neuron",            "Germ cell",         "Stem cell",      "Ectoderm",     "Ectoderm",
+                   "Neuron",            "Stem cell",         "Neuron",       "Muscle",         "Ectoderm",
+                   "Stem cell",         "Alga-hosting cell", "Gland cell"))
+cell_types <- merge(cell_types, cell_categories, by.x = "cell_type", by.y = "old") %>% 
+  select(barcode, new) %>% 
+  rename(cell_type = new)
+
+cell_types <- cell_types %>% column_to_rownames("barcode")
+seurat <- AddMetaData(seurat, metadata = cell_types)
+
+colors <- c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00", 
+            "#FFFF33", "#A65628", "#F781BF", "#6A3D9A", "#66C2A5",
+            "#FC8D62", "#8DA0CB", "#A6D854", "#FFD92F", "#E5C494",
+            "#B3B3B3", "#1B9E77", "#D95F02", "#7570B3", "#E7298A", 
+            "#E6AB02", "#1F78B4", "maroon",  "black",
+            "#B2DF8A", "#33A02C", "#FB9A99", "#E31A1C", "#FDBF6F", 
+            "#FF7F00", "#CAB2D6", "#FFFF99")
+
+# plots just the nematostella cells with the more specific IDs 
+pdf("umap_all.pdf", height = 10, width = 16)
+DimPlot(seurat, reduction = "umap", group.by = "cell_type", cols = colors)
+dev.off()
+
+
+# removing cells that are far away from the main cluster
+emb <- seurat@reductions$umap@cell.embeddings
+cells_to_keep <- rownames(emb)[emb[, "UMAP_1"] > -2.5 & emb[, "UMAP_2"] < 0]
+subset_seurat <- subset(seurat, cells = cells_to_keep)
+pdf("cell_type_umap.pdf", height = 10, width = 16)
+DimPlot(subset_seurat, reduction = "umap", group.by = "cell_type", cols = colors)
+dev.off()
+
+#med_subset <- subset(subset_seurat, species %in% c("aurelia", "hydra"))
+#pdf("umap.pdf", height = 10, width = 16)
+#DimPlot(med_subset, reduction = "umap", group.by = "cell_type", cols = colors)
+#dev.off()
+
+#anth_subset <- subset(subset_seurat, species %in% c("xenia", "nematostella", "acropora"))
+#pdf("umap.pdf", height = 10, width = 16)
+#DimPlot(anth_subset, reduction = "umap", group.by = "cell_type", cols = colors)
+#dev.off()
+```
+
+```{r feature_plot_split}
+
+ogs_gained <- focal_nodes[focal_nodes$name == "cnid",]$ogs
+genes_gained <- filter(ogmap, og %in% unlist(ogs_gained)) %>% 
+  pull(sc_ID)
+
+species_list <- SplitObject(seurat, split.by = "species")
+
+for (sp in names(species_list)){
+  obj <- species_list[[sp]]
+  
+  gene_gain_filtered <- intersect(genes_gained, rownames(obj))
+  
+  obj <- NormalizeData(obj, normalization.method = "LogNormalize")
+  
+  obj <- AddModuleScore(
+        obj,
+        features = list(gene_gain_filtered),
+        name = paste0("Module_", sp, "_")
+    )
+  
+  print(FeaturePlot(obj, features = paste0("Module_", sp, "_1"), reduction = "umap") +
+    scale_colour_gradientn(colors = c("yellow", "deeppink1", "blue")) +
+    theme(plot.background = element_rect(color = node_cols["cnid"], fill = NA, size = 3)) +
+    ggtitle(NULL))
+  
+  species_list[[sp]] <- obj
+}
+
+cnid_scored <- merge(
+    species_list[[1]],
+    y = species_list[2:length(species_list)]
+)
+
+# unify module score into one column
+cnid_scored$cnid_gain_score <- NA
+
+for (sp in unique(cnid_scored$species)) {
+    colname <- paste0("Module_", sp, "_1")
+    idx <- cnid_scored$species == sp
+    cnid_scored$cnid_gain_score[idx] <- cnid_scored[[colname]][,1][idx]
+}
+
+cnid_scored[["umap"]] <- CreateDimReducObject(
+  embeddings = as.matrix(umap),
+  key = "UMAP_",
+  assay = "RNA"
+)
+
+emb <- cnid_scored@reductions$umap@cell.embeddings
+cells_to_keep <- rownames(emb)[emb[, "UMAP_1"] > -2.5 & emb[, "UMAP_2"] < 0]
+cnid_subset <- subset(cnid_scored, cells = cells_to_keep)
+#cnid_subset <- subset(cnid_subset, species %in% c("hydra", "aurelia", "nematostella"))
+
+
+feature_plot <- 
+  FeaturePlot(cnid_subset, features = "cnid_gain_score", reduction = "umap") + 
+  scale_colour_gradientn(colors = c("yellow", "#ff57c7", "blue")) +
+  theme(plot.background = element_rect(color = node_cols["cnid"], fill = NA, size = 3)) +
+  ggtitle(NULL) 
+  
+dir.create("figures")
+
+pdf("figures/cnidaria_umap.pdf", width = 8, height = 8)
+print(feature_plot) 
+dev.off()
+
+```
+
