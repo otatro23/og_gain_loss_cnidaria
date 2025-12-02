@@ -21,6 +21,8 @@ parser.add_argument("--out", "-o", type = str, default = "compare.out.tsv", help
 parser.add_argument("--abstractions", "-a", type = int, default = 2, help = "number of \"is_a\" relationship levels to consider")
 args = parser.parse_args()
 
+print(args.deepfri_filter)
+
 # -------------------------------------- parse go.obo ----------------------------------------
 
 # class that contains go terms and instance attributes for their "is_a" relationships, whether they are obsolete or not, and their replacement if they have one
@@ -245,6 +247,7 @@ abs_scores = []
 
 # calculate jaccard index and write to output file
 with open(args.out, "w") as output:
+    output.write("# DeepFRI annotations filtered by Score >= {0}\n".format(args.deepfri_filter))
     writer = csv.writer(output, delimiter = "\t")
     for query, go_sets in annotations.items():
         # skip if it doesn't have annotations from both eggnog and deepfri
@@ -297,4 +300,3 @@ with open("compare_summary.txt", "a") as summary:
     mean_abs = sum(abs_scores)/len(abs_scores)
     mean_jaccard = sum(jaccard_scores)/len(jaccard_scores)
     writer.writerow([mean_abs, mean_jaccard, args.deepfri_filter])
-
