@@ -73,36 +73,43 @@ rm(aurelia_map, acropora_map, hydra_map, nematostella_map, xenia_map)
   # node: node number
   # name: abreviated node name (eg "anth")
   # ogs: list of ogs gained at node
-focal_nodes <- data.frame(
-  node = c(132, 133, 103, 104, 129, 
-           130, 105, 116, 163, 159, 
-           134, 137, 120, 108, 102, 
-           150,   2,  22,  87,  88, 
-           90,   74,  42,  11, 106,
-           114, 117, 121, 122, 164, 
-           166, 135, 136, 138, 139,
-           140,  99, 100, 101),
-  name = c("anth", "anth2", "endomed", "med", "endo", 
-           "myx", "hyd", "acr", "oct", "cer", 
-           "hex", "scler", "scyph", "siph", "cnid", 
-           "act", "acropora", "nematostella", "hydra", "clytia",
-           "turritopsis", "aurelia", "xenia", "stylophora", "106",
-           "114", "117", "121", "122", "164", 
-           "166", "135", "136", "138", "139",
-           "140", "myr", "plan", "eum"),
-  full_name = c("Anthozoa", "Ceriantheria + Hexacorallia", "Endocnidozoa + Medusozoa", "Medusozoa", "Endocnidozoa",
-                "Myxozoa", "Hydrozoa", "Acraspeda", "Octocorallia", "Ceriantheria", 
-                "Hexacorallia", "Scleractinia", "Scyphozoa", "Siphonophora", "Cnidaria",
-                "Actinaria", "Acropora", "Nematostella", "Hydra", "Clytia", 
-                "Turritopsis", "Aurelia", "Xenia", "Stylophora", "106",
-                "114", "117", "121", "122", "164", 
-                "166", "135", "136", "138", "139",
-                "140", "Myriazoa", "Planulozoa", "Eumetazoa")
-  )
-print("Extracting OG gains for focal nodes from the orthodollo lossgain table...")
-focal_nodes$ogs <- lapply(focal_nodes$node, function(n){
-  colnames(lossgain.table)[lossgain.table[n, ] == "g"]
-})
+if(file.exists("focal_nodes.Rds")) {
+  readRDS("focal_nodes.Rds")
+} else {
+  focal_nodes <- data.frame(
+    node = c(132, 133, 103, 104, 129, 
+             130, 105, 116, 163, 159, 
+             134, 137, 120, 108, 102, 
+             150,   2,  22,  87,  88, 
+             90,   74,  42,  11, 106,
+             114, 117, 121, 122, 164, 
+             166, 135, 136, 138, 139,
+             140,  99, 100, 101),
+    name = c("anth", "anth2", "endomed", "med", "endo", 
+             "myx", "hyd", "acr", "oct", "cer", 
+             "hex", "scler", "scyph", "siph", "cnid", 
+             "act", "acropora", "nematostella", "hydra", "clytia",
+             "turritopsis", "aurelia", "xenia", "stylophora", "106",
+             "114", "117", "121", "122", "164", 
+             "166", "135", "136", "138", "139",
+             "140", "myr", "plan", "eum"),
+    full_name = c("Anthozoa", "Ceriantheria + Hexacorallia", "Endocnidozoa + Medusozoa", "Medusozoa", "Endocnidozoa",
+                  "Myxozoa", "Hydrozoa", "Acraspeda", "Octocorallia", "Ceriantheria", 
+                  "Hexacorallia", "Scleractinia", "Scyphozoa", "Siphonophora", "Cnidaria",
+                  "Actinaria", "Acropora", "Nematostella", "Hydra", "Clytia", 
+                  "Turritopsis", "Aurelia", "Xenia", "Stylophora", "106",
+                  "114", "117", "121", "122", "164", 
+                  "166", "135", "136", "138", "139",
+                  "140", "Myriazoa", "Planulozoa", "Eumetazoa")
+    )
+  print("Extracting OG gains for focal nodes from the orthodollo lossgain table...")
+  focal_nodes$ogs <- lapply(focal_nodes$node, function(n){
+    colnames(lossgain.table)[lossgain.table[n, ] == "g"]
+  })
+  
+  saveRDS(focal_nodes, file = "focal_nodes.Rds")
+}
+
 rm(lossgain.table)
 
 node_cols <- c("#E7468E", "#F63C35","#DA71FE", "#4991FE", "#8E10D2",
@@ -129,13 +136,13 @@ cell_categories <- data.frame(old = unique(cell_types$cell_type),
                    "Cnidoblast",        "Hair cell",         "Gastrodermis",   "Muscle",       "Mesoglea",
                    "Ectoderm",          "Neuron",            "Calicoblast",    "Ectoderm",     "Gastrodermis",
                    "Alga-hosting cell", "Progenitor",        "Gland cell",     "Cnidocyte",    "Digestive Filament",
-                   "Immune cell",       "Ectoderm",          "Muscle",        "Immune cell",  "Epithelial Ectoderm",
+                   "Immune cell",       "Ectoderm",          "Muscle",         "Immune cell",  "Epithelial Ectoderm",
                    "Cnidocyte",         "Ectoderm",          "Stem cell",      "Neuron",       "Cnidoblast",
                    "Gland cell",        "Muscle",            "Neuroglandular", "Germ cell",    "Stem cell",
                    "Head",              "Foot",              "Gland cell",     "Battery cell", "Stem cell",
                    "Basal disk",        "Tentacle",          "Neuroglandular", "Gland cell",   "Cnidocyte",
                    "Neuron",            "Germ cell",         "Stem cell",      "Ectoderm",     "Ectoderm",
-                   "Neuron",            "Stem cell",         "Neuron",       "Muscle",         "Ectoderm",
+                   "Neuron",            "Stem cell",         "Neuron",         "Muscle",         "Ectoderm",
                    "Stem cell",         "Alga-hosting cell", "Gland cell"))
 cell_types <- merge(cell_types, cell_categories, by.x = "cell_type", by.y = "old") %>% 
   select(barcode, new) %>% 
@@ -162,13 +169,16 @@ dev.off()
 emb <- seurat@reductions$umap@cell.embeddings
 cells_to_keep <- rownames(emb)[emb[, "UMAP_1"] > -2.5 & emb[, "UMAP_2"] < 0]
 subset_seurat <- subset(seurat, cells = cells_to_keep)
+cell_type_plot <- DimPlot(subset_seurat, reduction = "umap", group.by = "cell_type", cols = colors, pt.size = 1.2) +
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 3))) +
+  theme(plot.title = element_blank())
 pdf("cell_type_umap.pdf", height = 10, width = 16)
-DimPlot(subset_seurat, reduction = "umap", group.by = "cell_type", cols = colors)
+print(cell_type_plot)
 dev.off()
 
-#med_subset <- subset(subset_seurat, species %in% c("aurelia", "hydra"))
+med_subset <- subset(subset_seurat, species %in% c("aurelia", "hydra"))
 #pdf("umap.pdf", height = 10, width = 16)
-#DimPlot(med_subset, reduction = "umap", group.by = "cell_type", cols = colors)
+DimPlot(med_subset, reduction = "umap", group.by = "cell_type", cols = colors)
 #dev.off()
 
 #anth_subset <- subset(subset_seurat, species %in% c("xenia", "nematostella", "acropora"))
@@ -179,30 +189,43 @@ dev.off()
 
 ```{r feature_plot_split}
 
-ogs_gained <- focal_nodes[focal_nodes$name == "cnid",]$ogs
-genes_gained <- filter(ogmap, og %in% unlist(ogs_gained)) %>% 
-  pull(sc_ID)
+dir.create("figures")
+
+nodes = c("cnid", "endomed", "med", "acr", "anth", "oct", "act", "scler", "hyd", "scyph")
 
 species_list <- SplitObject(seurat, split.by = "species")
 
 for (sp in names(species_list)){
   obj <- species_list[[sp]]
-  
-  gene_gain_filtered <- intersect(genes_gained, rownames(obj))
-  
   obj <- NormalizeData(obj, normalization.method = "LogNormalize")
   
-  obj <- AddModuleScore(
-        obj,
-        features = list(gene_gain_filtered),
-        name = paste0("Module_", sp, "_")
-    )
-  
-  print(FeaturePlot(obj, features = paste0("Module_", sp, "_1"), reduction = "umap") +
-    scale_colour_gradientn(colors = c("yellow", "deeppink1", "blue")) +
-    theme(plot.background = element_rect(color = node_cols["cnid"], fill = NA, size = 3)) +
-    ggtitle(NULL))
-  
+  for (node in nodes) {
+    module_name = paste0("Module_", sp, "_", node, "_")
+    ogs_gained <- focal_nodes[focal_nodes$name == node,]$ogs
+    genes_gained <- filter(ogmap, og %in% unlist(ogs_gained))
+    
+    # if there are no gains in a node, make the module score all NA
+    if (nrow(filter(genes_gained, grepl(sp, sc_ID))) == 0) {
+      print(paste(sp, "did not have gains in", node))
+      obj[[paste0(module_name,1)]] <- NA
+    } else {
+      genes_gained <- genes_gained$sc_ID
+      gene_gain_filtered <- intersect(genes_gained, rownames(obj))
+      
+      obj <- AddModuleScore(
+          obj,
+          features = list(gene_gain_filtered),
+          name = module_name
+      )
+      
+      print(FeaturePlot(obj, features = paste0(module_name, "1"), reduction = "umap") +
+        scale_colour_gradientn(colors = c("yellow", "deeppink1", "blue")) +
+        theme(plot.background = element_rect(color = node_cols[node], fill = NA, size = 3)) +
+        ggtitle(NULL))
+      
+    }
+    
+  }
   species_list[[sp]] <- obj
 }
 
@@ -211,38 +234,71 @@ cnid_scored <- merge(
     y = species_list[2:length(species_list)]
 )
 
-# unify module score into one column
-cnid_scored$cnid_gain_score <- NA
-
-for (sp in unique(cnid_scored$species)) {
-    colname <- paste0("Module_", sp, "_1")
-    idx <- cnid_scored$species == sp
-    cnid_scored$cnid_gain_score[idx] <- cnid_scored[[colname]][,1][idx]
-}
-
 cnid_scored[["umap"]] <- CreateDimReducObject(
   embeddings = as.matrix(umap),
   key = "UMAP_",
   assay = "RNA"
 )
 
-emb <- cnid_scored@reductions$umap@cell.embeddings
-cells_to_keep <- rownames(emb)[emb[, "UMAP_1"] > -2.5 & emb[, "UMAP_2"] < 0]
-cnid_subset <- subset(cnid_scored, cells = cells_to_keep)
-#cnid_subset <- subset(cnid_subset, species %in% c("hydra", "aurelia", "nematostella"))
+# get minimum and maximum module scores from all columns 
+module_cols <- grep("^Module_", colnames(cnid_scored@meta.data), value = TRUE)
+mins <- numeric()
+maxs <- numeric()
+for (module in module_cols) {
+  if(!all(is.na(cnid_scored[[module]][,1]))) {
+    mins <- c(mins, min(cnid_scored[[module]][,1], na.rm = TRUE))
+    maxs <- c(maxs, max(cnid_scored[[module]][,1], na.rm = TRUE))
+  }
+}
+min_mod_score <- min(mins)
+max_mod_score <- max(maxs)
 
+plots <- list()
 
-feature_plot <- 
-  FeaturePlot(cnid_subset, features = "cnid_gain_score", reduction = "umap") + 
-  scale_colour_gradientn(colors = c("yellow", "#ff57c7", "blue")) +
-  theme(plot.background = element_rect(color = node_cols["cnid"], fill = NA, size = 3)) +
-  ggtitle(NULL) 
+for (node in nodes) {
+  # unify module score into one column
+  cnid_scored$node_gain_score <- NA
   
-dir.create("figures")
+  for (sp in unique(cnid_scored$species)) {
+      colname <- paste0("Module_", sp, "_", node, "_1")
+      idx <- cnid_scored$species == sp
+      cnid_scored$node_gain_score[idx] <- cnid_scored[[colname]][,1][idx]
+  }
+  
+  emb <- cnid_scored@reductions$umap@cell.embeddings
+  cells_to_keep <- rownames(emb)[emb[, "UMAP_1"] > -2.5 & emb[, "UMAP_2"] < 0]
+  cnid_subset <- subset(cnid_scored, cells = cells_to_keep)
+  
+  na_cells <- colnames(cnid_subset)[is.na(cnid_subset[["node_gain_score"]][,1])]
+  non_na_cells <- colnames(cnid_subset)[!is.na(cnid_subset[["node_gain_score"]][,1])]
+  # shuffle order so it looks less blocky
+  non_na_cells <- sample(non_na_cells, length(non_na_cells), replace = FALSE)
+  
+  feature_plot <- 
+    FeaturePlot(cnid_subset, features = "node_gain_score", reduction = "umap", cells = c(na_cells, non_na_cells)) + 
+    scale_colour_gradientn(colors = c("yellow", "#ff57c7", "blue")) + #, limits = c(min_mod_score, max_mod_score) c("yellow", "#ff57c7", "blue")
+    theme(plot.background = element_rect(color = node_cols[node], fill = NA, size = 3)) +
+    ggtitle(NULL) 
+  
+  feature_plot <- feature_plot + coord_cartesian(clip = "off") +
+    annotate("label", x = Inf, y = Inf, label = focal_nodes$full_name[focal_nodes$name == node], fill = "white", color = node_cols[node], size = 5, hjust = 1)
+  
+  plots[[node]] <- feature_plot
+  
+  #pdf(paste0("figures/", node, "_umap.pdf"), width = 8, height = 8)
+  #print(feature_plot) 
+  #dev.off()
+}
+blank_plot <- ggplot() + theme_void()
+q1 <- cell_type_plot
+q2 <- cowplot::plot_grid(plotlist = plots[1:4], nrow = 2, ncol = 2)
+q3 <- cowplot::plot_grid(plotlist = plots[5:8], nrow = 2, ncol = 2)
+q4 <- cowplot::plot_grid(plotlist = c(plots[9:10], blank_plot, blank_plot), nrow = 2, ncol = 2)
 
-pdf("figures/cnidaria_umap.pdf", width = 8, height = 8)
-print(feature_plot) 
-dev.off()
+samap_fig <- cowplot::plot_grid(q1, q2, q3, q4, nrow = 2, ncol = 2)
 
+#pdf("figures/samap_exp.pdf", height = 20, width = 20)
+print(samap_fig)
+ggsave("figures/samap_exp.png", width = 25, height = 25)
+#dev.off()
 ```
-
