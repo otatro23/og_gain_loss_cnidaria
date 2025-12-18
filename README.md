@@ -1,7 +1,7 @@
 # og_gain_loss_cnidaria
 This project aims to increase our understanding of genomic mechanisms that lead to the evolution of complex traits in Cnidaria. 
 
-### Data: 
+# Data: 
 - Proteomes of 72 cnidarians, 3 ctenophores, 6 sponges, Trichoplax, and 15 bilaterians
 - Single cell RNA sequencing data from _Hydra vulgaris_, _Aurelia coerulea_, _Xenia sp._, _Nematostella vectensis_, and _Acropora millepora_
 
