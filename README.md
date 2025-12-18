@@ -3,7 +3,7 @@ This project aims to increase our understanding of genomic mechanisms that lead 
 
 ### Data: 
 - Proteomes of 72 cnidarians, 3 ctenophores, 6 sponges, Trichoplax, and 15 bilaterians
-- Single cell RNA sequencing data from _Hydra vulgaris_, _Clytia hemisphaerica_, _Turritopsis rubra_, _Aurelia coerulea_, _Xenia sp._, _Nematostella vectensis_, _Acropora millepora_, and _stylophora pistillata_
+- Single cell RNA sequencing data from _Hydra vulgaris_, _Aurelia coerulea_, _Xenia sp._, _Nematostella vectensis_, and _Acropora millepora_
 
 # Objectives: 
 1. Determine orthogroup gains and losses within Cnidaria and summarize the overall functions that were gained and lost at focal nodes.
