@@ -17,6 +17,9 @@ library(SeuratData)
 library(tidyseurat)
 library(geiger)
 library(SeuratDisk)
+library(ggrepel)
+library(ggtree)
+library(colorspace)
 ```
 
 ```{r import_data}
@@ -60,7 +63,10 @@ hydra_map$sc_ID <- paste0("hydra-", hydra_map$sc_ID)
 nematostella_map$sc_ID <- paste0("nematostella-", nematostella_map$sc_ID)
 xenia_map$sc_ID <- paste0("xenia-", xenia_map$sc_ID)
 
-ogmap <- rbind(acropora_map, aurelia_map, hydra_map, nematostella_map, xenia_map)
+ogmap <- unique(rbind(acropora_map, aurelia_map, hydra_map, nematostella_map, xenia_map)) %>% filter(!is.na(og) & !is.na(sc_ID))
+
+# save for gep mapping
+write.table(ogmap, file = "ogmap.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
 rm(aurelia_map, acropora_map, hydra_map, nematostella_map, xenia_map)
 
 
@@ -74,7 +80,7 @@ rm(aurelia_map, acropora_map, hydra_map, nematostella_map, xenia_map)
   # name: abreviated node name (eg "anth")
   # ogs: list of ogs gained at node
 if(file.exists("focal_nodes.Rds")) {
-  readRDS("focal_nodes.Rds")
+  focal_nodes <- readRDS("focal_nodes.Rds")
 } else {
   focal_nodes <- data.frame(
     node = c(132, 133, 103, 104, 129, 
@@ -112,10 +118,10 @@ if(file.exists("focal_nodes.Rds")) {
 
 rm(lossgain.table)
 
-node_cols <- c("#E7468E", "#F63C35","#DA71FE", "#4991FE", "#8E10D2",
-               "#590D8F",  "#2448D8", "#2ED9FF", "#AF0623", "",
-               "#FA8018","#B1E923","#1FD295", "","#F4A7DE",
-               "#F6E01A", "grey20", "grey20","grey20","grey20",
+node_cols <- c("#E7468E", "#e34a32","#DA71FE", "#4991FE", "#8E10D2",
+               "#590D8F",  "#2448D8", "#2ED9FF", "#9e021c", "#9bcc1f",
+               "#fa7e18","#0a7d23","#1FD295", "#0e0c70","#e08dc9",
+               "#e3af02", "grey20", "grey20","grey20","grey20",
                "grey20","grey20","grey20","grey20", "grey20",
                "grey20","grey20","grey20","grey20", "grey20",
                "grey20","grey20","grey20","grey20", "grey20",
@@ -136,68 +142,187 @@ cell_categories <- data.frame(old = unique(cell_types$cell_type),
                    "Cnidoblast",        "Hair cell",         "Gastrodermis",   "Muscle",       "Mesoglea",
                    "Ectoderm",          "Neuron",            "Calicoblast",    "Ectoderm",     "Gastrodermis",
                    "Alga-hosting cell", "Progenitor",        "Gland cell",     "Cnidocyte",    "Digestive Filament",
-                   "Immune cell",       "Ectoderm",          "Muscle",         "Immune cell",  "Epithelial Ectoderm",
+                   "Immune cell",       "Ectoderm",          "Muscle",         "Immune cell",  "Ectoderm",
                    "Cnidocyte",         "Ectoderm",          "Stem cell",      "Neuron",       "Cnidoblast",
                    "Gland cell",        "Muscle",            "Neuroglandular", "Germ cell",    "Stem cell",
                    "Head",              "Foot",              "Gland cell",     "Battery cell", "Stem cell",
                    "Basal disk",        "Tentacle",          "Neuroglandular", "Gland cell",   "Cnidocyte",
                    "Neuron",            "Germ cell",         "Stem cell",      "Ectoderm",     "Ectoderm",
-                   "Neuron",            "Stem cell",         "Neuron",         "Muscle",         "Ectoderm",
+                   "Neuron",            "Stem cell",         "Neuron",         "Muscle",       "Ectoderm",
                    "Stem cell",         "Alga-hosting cell", "Gland cell"))
 cell_types <- merge(cell_types, cell_categories, by.x = "cell_type", by.y = "old") %>% 
   select(barcode, new) %>% 
-  rename(cell_type = new)
+  dplyr::rename(cell_type = new)
 
 cell_types <- cell_types %>% column_to_rownames("barcode")
 seurat <- AddMetaData(seurat, metadata = cell_types)
 
-colors <- c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00", 
-            "#FFFF33", "#A65628", "#F781BF", "#6A3D9A", "#66C2A5",
-            "#FC8D62", "#8DA0CB", "#A6D854", "#FFD92F", "#E5C494",
-            "#B3B3B3", "#1B9E77", "#D95F02", "#7570B3", "#E7298A", 
-            "#E6AB02", "#1F78B4", "maroon",  "black",
-            "#B2DF8A", "#33A02C", "#FB9A99", "#E31A1C", "#FDBF6F", 
-            "#FF7F00", "#CAB2D6", "#FFFF99")
-
+colors <- c("#E41A1C", "#2f6b9c", "#395e28", "#b45dc2", "#fc953a", 
+            "#FFFF33", "#c97c65", "#f794c9", "#54307a", "#257368",
+            "#5c1212", "#9bcfe8", "#A6D854", "#cca702", "#E5C494",
+            "#B3B3B3", "#0c1d69", "#d15b02", "#7570B3", "#fa3299", 
+            "#8f3b62", "#c196fa")
+colors_named <- setNames(colors, levels(as.factor(seurat$cell_type)))
 # plots just the nematostella cells with the more specific IDs 
-pdf("umap_all.pdf", height = 10, width = 16)
+#pdf("umap_all.pdf", height = 10, width = 16)
 DimPlot(seurat, reduction = "umap", group.by = "cell_type", cols = colors)
-dev.off()
+#dev.off()
 
 
 # removing cells that are far away from the main cluster
 emb <- seurat@reductions$umap@cell.embeddings
-cells_to_keep <- rownames(emb)[emb[, "UMAP_1"] > -2.5 & emb[, "UMAP_2"] < 0]
+cells_to_keep <- rownames(emb)[emb[, "UMAP_1"] > -0.5 & emb[, "UMAP_1"] < 8.75 & emb[, "UMAP_2"] < -4 & emb[, "UMAP_2"] > -17]
 subset_seurat <- subset(seurat, cells = cells_to_keep)
-cell_type_plot <- DimPlot(subset_seurat, reduction = "umap", group.by = "cell_type", cols = colors, pt.size = 1.2) +
-  guides(color = guide_legend(ncol = 1, override.aes = list(size = 3))) +
-  theme(plot.title = element_blank())
-pdf("cell_type_umap.pdf", height = 10, width = 16)
-print(cell_type_plot)
-dev.off()
+cells <- colnames(subset_seurat)
+cells <- sample(cells, length(cells), replace = FALSE)
 
-med_subset <- subset(subset_seurat, species %in% c("aurelia", "hydra"))
+# orders cell types by the length of the actual word so that one column is wider than the other (to avoid decreasing font size)
+cell_type_order <- subset_seurat$cell_type %>%
+  as.factor() %>% 
+  levels() %>%
+  .[order(nchar(.), decreasing = TRUE)]
+
+cell_type_order <- cell_type_order[length(cell_type_order):1]
+
+# Reorder cell type factor in the seurat object
+subset_seurat$cell_type <- factor(subset_seurat$cell_type, levels = cell_type_order)
+
+colors_reordered <- colors_named[cell_type_order]
+
+
+cell_type_plot <- DimPlot(subset_seurat, reduction = "umap", group.by = "cell_type", cols = colors_reordered, pt.size = 0.5, cells = cells) +
+  guides(color = guide_legend(ncol = 2, override.aes = list(size = 6))) +
+  theme(plot.title = element_blank())
+        #legend.text = element_text(size = 18, color = "white"), 
+        # Black background
+        #plot.background = element_rect(fill = "black", color = "black"),
+        #panel.background = element_rect(fill = "black", color = "black"),
+        # White axes and text
+        #axis.text = element_text(color = "white"),
+        #axis.title = element_text(color = "white"),
+        #axis.ticks = element_line(color = "white"),
+        #axis.line = element_line(color = "white"),
+        # Legend background
+        #legend.background = element_rect(fill = "black", color = "black"),
+        #legend.key = element_rect(fill = "black", color = "black"),
+        #legend.title = element_text(color = "white"))
+
+# extract legend
+legend <- cowplot::get_legend(cell_type_plot)
+cowplot::ggdraw(legend)
+
+# remove legend
+cell_type_plot <- cell_type_plot + theme(legend.position = "none")
+
+full_cell_type_plot <- 
+  ggdraw(cell_type_plot) +
+  draw_plot(legend, x = 0.67, y = 0.7, width = 0.25, height = 0.2)
+  #draw_plot(legend, x = 0.08, y = 0.075, width = 0.25, height = 0.2)
+
+
+subset_seurat$species <- tools::toTitleCase(subset_seurat$species)
+
+#saveRDS(subset_seurat, file = "subset_seurat.Rds")
+
+species_plot <- DimPlot(subset_seurat, reduction = "umap", group.by = "species", pt.size = 0.5, cols = c("#0072B2", "#009E73", "#D55E00", "#CC79A7", "#683c98"), cells = cells) +
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 6))) +
+  theme(plot.title = element_blank())
+        #legend.text = element_text(size = 24, color = "white"),
+        # Black background
+        #plot.background = element_rect(fill = "black", color = "black"),
+        #panel.background = element_rect(fill = "black", color = "black"),
+        # White axes and text
+        #axis.text = element_text(color = "white"),
+        #axis.title = element_text(color = "white"),
+        #axis.ticks = element_line(color = "white"),
+        #axis.line = element_line(color = "white"),
+        # Legend background
+        #legend.background = element_rect(fill = "black", color = "black"),
+        #legend.key = element_rect(fill = "black", color = "black"),
+        #legend.title = element_text(color = "white"))
+
+legend <- cowplot::get_legend(species_plot)
+# remove legend
+species_plot <- species_plot + theme(legend.position = "none")
+
+full_species_plot <- ggdraw(species_plot) +
+  #draw_plot(legend, x = 0.75, y = 0.65, width = 0.25, height = 0.2)+
+  draw_plot(legend, x = 0.2, y = 0.1, width = 0.25, height = 0.2)
+
+
+
+
+# species plot for cnidofest
+species_plot <- DimPlot(subset_seurat, reduction = "umap", group.by = "species", pt.size = 0.5, cols = c("#16a4f5", "#009E73", "#e36e12", "#de7ead", "#aa75fa"), cells = cells) +
+  guides(color = guide_legend(ncol = 1, override.aes = list(size = 6))) +
+  theme(plot.title = element_blank(),
+        legend.text = element_text(size = 40, color = "white"),
+        # Black background
+        plot.background = element_rect(fill = "black", color = "black"),
+        panel.background = element_rect(fill = "black", color = "black"),
+        # White axes and text
+        axis.text = element_text(color = "white"),
+        axis.title = element_text(color = "white"),
+        axis.ticks = element_line(color = "white"),
+        axis.line = element_line(color = "white"),
+        # Legend background
+        legend.background = element_rect(fill = "black", color = "black"),
+        legend.key = element_rect(fill = "black", color = "black"),
+        legend.title = element_text(color = "white"))
+
+legend <- cowplot::get_legend(species_plot)
+# remove legend
+species_plot <- species_plot + theme(legend.position = "none")
+
+full_species_plot <- ggdraw(species_plot) +
+  #draw_plot(legend, x = 0.75, y = 0.65, width = 0.25, height = 0.2)+
+  draw_plot(legend, x = 0.1, y = 0.02, width = 0.35, height = 0.3)
+
+full_species_plot
+ggsave("figures/species_plot_cnidofest.png", width = 15, height = 15)
+
+# finding centroids of each cell type
+#umap_df <- FetchData(subset_seurat, vars = c("UMAP_1", "UMAP_2", "cell_type"))
+#centroids <- umap_df %>%
+#  group_by(cell_type) %>%
+#  summarize(UMAP_1 = median(UMAP_1), UMAP_2 = median(UMAP_2))
+
+#cell_type_plot <- a
+#cell_type_plot + 
+#  geom_point(data = umap_df, aes(x = UMAP_1, y = UMAP_2), alpha = 0) +
+#  geom_text_repel(data = centroids, aes(x = UMAP_1, y = UMAP_2, label = cell_type),
+#                  size = 4, box.padding = 0.6, max.overlaps = Inf, 
+#                  min.segment.length = 2, point.padding = 0.6)
+
+#med_subset <- subset(subset_seurat, species %in% c("aurelia", "hydra"))
 #pdf("umap.pdf", height = 10, width = 16)
-DimPlot(med_subset, reduction = "umap", group.by = "cell_type", cols = colors)
+#DimPlot(med_subset, reduction = "umap", group.by = "cell_type", cols = colors)
 #dev.off()
 
 #anth_subset <- subset(subset_seurat, species %in% c("xenia", "nematostella", "acropora"))
 #pdf("umap.pdf", height = 10, width = 16)
 #DimPlot(anth_subset, reduction = "umap", group.by = "cell_type", cols = colors)
 #dev.off()
+#rm(seurat)
+rm(emb)
+rm(subset_seurat)
 ```
 
 ```{r feature_plot_split}
 
 dir.create("figures")
 
-nodes = c("cnid", "endomed", "med", "acr", "anth", "oct", "act", "scler", "hyd", "scyph")
+nodes = c("anth", "anth2", "hex", "acr", 
+          "oct", "act", "scler", "scyph", 
+          "cnid", "endomed", "med", "hyd")
 
 species_list <- SplitObject(seurat, split.by = "species")
+rm(seurat)
 
 for (sp in names(species_list)){
   obj <- species_list[[sp]]
   obj <- NormalizeData(obj, normalization.method = "LogNormalize")
+  #obj <- ScaleData(obj) ################### does this work???? ########################
   
   for (node in nodes) {
     module_name = paste0("Module_", sp, "_", node, "_")
@@ -218,17 +343,17 @@ for (sp in names(species_list)){
           name = module_name
       )
       
-      print(FeaturePlot(obj, features = paste0(module_name, "1"), reduction = "umap") +
-        scale_colour_gradientn(colors = c("yellow", "deeppink1", "blue")) +
-        theme(plot.background = element_rect(color = node_cols[node], fill = NA, size = 3)) +
-        ggtitle(NULL))
+      #print(FeaturePlot(obj, features = paste0(module_name, "1"), reduction = "umap") +
+        #scale_colour_gradientn(colors = c("yellow", "deeppink1", "blue")) +
+        #theme(plot.background = element_rect(color = node_cols[node], fill = NA, size = 3)) +
+        #ggtitle(NULL))
       
     }
     
   }
   species_list[[sp]] <- obj
 }
-
+rm(obj)
 cnid_scored <- merge(
     species_list[[1]],
     y = species_list[2:length(species_list)]
@@ -240,20 +365,13 @@ cnid_scored[["umap"]] <- CreateDimReducObject(
   assay = "RNA"
 )
 
-# get minimum and maximum module scores from all columns 
-module_cols <- grep("^Module_", colnames(cnid_scored@meta.data), value = TRUE)
-mins <- numeric()
-maxs <- numeric()
-for (module in module_cols) {
-  if(!all(is.na(cnid_scored[[module]][,1]))) {
-    mins <- c(mins, min(cnid_scored[[module]][,1], na.rm = TRUE))
-    maxs <- c(maxs, max(cnid_scored[[module]][,1], na.rm = TRUE))
-  }
-}
-min_mod_score <- min(mins)
-max_mod_score <- max(maxs)
-
 plots <- list()
+violin_plots <- list()
+boxplots <- list()
+exp_summary <- data.frame(cell_type = unique(cnid_scored$cell_type))
+
+kruskal_tests <- data.frame(node = character(), pval = numeric(), statistic = numeric())
+wilcox_tests = data.frame(node = character(), cell_type = character(), pval = numeric(), W_statistic = numeric())
 
 for (node in nodes) {
   # unify module score into one column
@@ -264,41 +382,786 @@ for (node in nodes) {
       idx <- cnid_scored$species == sp
       cnid_scored$node_gain_score[idx] <- cnid_scored[[colname]][,1][idx]
   }
-  
+
+  # remove the few cells in random clusters far from most of the UMAP
   emb <- cnid_scored@reductions$umap@cell.embeddings
-  cells_to_keep <- rownames(emb)[emb[, "UMAP_1"] > -2.5 & emb[, "UMAP_2"] < 0]
+  cells_to_keep <- rownames(emb)[emb[, "UMAP_1"] > -0.5 & emb[, "UMAP_1"] < 8.75 & emb[, "UMAP_2"] < -4 & emb[, "UMAP_2"] > -17]
   cnid_subset <- subset(cnid_scored, cells = cells_to_keep)
   
   na_cells <- colnames(cnid_subset)[is.na(cnid_subset[["node_gain_score"]][,1])]
   non_na_cells <- colnames(cnid_subset)[!is.na(cnid_subset[["node_gain_score"]][,1])]
-  # shuffle order so it looks less blocky
-  non_na_cells <- sample(non_na_cells, length(non_na_cells), replace = FALSE)
+  # shuffle plotting order so it looks less blocked by species
+  #non_na_cells <- sample(non_na_cells, length(non_na_cells), replace = FALSE)
+  scores <- cnid_subset[["node_gain_score"]][non_na_cells, 1]
+  non_na_cells <- non_na_cells[order(scores, decreasing = FALSE)] # this works because order() returns indices sorted by value, not the values themselves sorted
+  
+  node_summary <- data.frame(cell_type = cnid_scored$cell_type, node_gain_score = cnid_scored$node_gain_score) %>% group_by(cell_type) %>% 
+    summarize(!!node := mean(node_gain_score, na.rm = TRUE))
+  
+  exp_summary <- merge(exp_summary, node_summary, by = "cell_type")
   
   feature_plot <- 
     FeaturePlot(cnid_subset, features = "node_gain_score", reduction = "umap", cells = c(na_cells, non_na_cells)) + 
-    scale_colour_gradientn(colors = c("yellow", "#ff57c7", "blue")) + #, limits = c(min_mod_score, max_mod_score) c("yellow", "#ff57c7", "blue")
-    theme(plot.background = element_rect(color = node_cols[node], fill = NA, size = 3)) +
-    ggtitle(NULL) 
+    scale_colour_gradientn(colors = c("#070175", "#6f00b5", "#eb098a", "#f77c2a", "#f7de00", "#ffffdb")) +
+    theme(#plot.background = element_rect(color = node_cols[node], fill = "white", size = 6),
+          plot.margin = margin(t = 10, r = 5.5, b = 5.5, l = 5.5),
+          #axis.title = element_blank(),
+          axis.title = element_text(color = "white"),
+          # Black background
+          plot.background = element_rect(fill = "black", color = "black"),
+          panel.background = element_rect(fill = "black", color = "black"),
+          # White axes and text
+          axis.text = element_text(color = "white"),
+          axis.ticks = element_line(color = "white"),
+          axis.line = element_line(color = "white"),
+          # Legend background
+          legend.background = element_rect(fill = "black", color = "black"),
+          legend.key = element_rect(fill = "black", color = "black"),
+          legend.title = element_text(color = "white"),
+          legend.text = element_text(color = "white")) +
+    ggtitle(NULL) #+
   
-  feature_plot <- feature_plot + coord_cartesian(clip = "off") +
-    annotate("label", x = Inf, y = Inf, label = focal_nodes$full_name[focal_nodes$name == node], fill = "white", color = node_cols[node], size = 5, hjust = 1)
+  legend <- cowplot::get_legend(feature_plot)
+  
+  feature_plot <- feature_plot + theme(legend.position = "none") +
+    coord_cartesian(clip = "off")# +
+    #annotate("label", x = Inf, y = Inf, label = focal_nodes$full_name[focal_nodes$name == node], fill = "white", color = node_cols[node], size = 8, hjust = 1, fontface = "bold", linewidth = 1.2) 
+    #annotate("text", x = 8.5, y = -5, label = "Expression score:", size = 4, hjust = 1) 
+  
+  feature_plot <- 
+  ggdraw(feature_plot) +
+    draw_plot(legend, x = 0.77, y = 0.72, width = 0.1, height = 0.1) 
   
   plots[[node]] <- feature_plot
   
   #pdf(paste0("figures/", node, "_umap.pdf"), width = 8, height = 8)
-  #print(feature_plot) 
+  print(feature_plot) 
   #dev.off()
-}
-blank_plot <- ggplot() + theme_void()
-q1 <- cell_type_plot
-q2 <- cowplot::plot_grid(plotlist = plots[1:4], nrow = 2, ncol = 2)
-q3 <- cowplot::plot_grid(plotlist = plots[5:8], nrow = 2, ncol = 2)
-q4 <- cowplot::plot_grid(plotlist = c(plots[9:10], blank_plot, blank_plot), nrow = 2, ncol = 2)
 
-samap_fig <- cowplot::plot_grid(q1, q2, q3, q4, nrow = 2, ncol = 2)
+  
+  ### violin plot 
+  cell_type_scores <- cnid_subset@meta.data[c("cell_type", "node_gain_score")]
+  
+  violin_colors <- colors
+  names(violin_colors) <- sort(unique(cell_type_scores$cell_type))
+  
+  plot <- ggplot(data = cell_type_scores, aes(x = cell_type, y = node_gain_score))+
+    geom_violin(aes(fill = cell_type)) +
+    scale_fill_manual(values = violin_colors) +
+    ylab("Node gain score") +
+    xlab(NULL)+
+    theme_classic()+
+    theme(axis.text.x = element_text(angle = 35, hjust = 1),
+          legend.position = "none",
+          plot.background = element_rect(color = node_cols[node], fill = "white", size = 6),
+          plot.margin = margin(t = 20, r = 6, b = 5.5, l = 10)) +
+    coord_cartesian(clip = "off") +
+    annotate("label", x = Inf, y = Inf, label = focal_nodes$full_name[focal_nodes$name == node], fill = "white", color = node_cols[node], size = 8, hjust = 1, fontface = "bold", linewidth = 1.2, alpha = 1) 
+  
+  violin_plots[[node]] <- plot
+  
+  
+  ### boxplot
+  plot <- ggplot(data = cell_type_scores, aes(x = cell_type, y = node_gain_score))+
+    geom_boxplot(aes(fill = cell_type)) +
+    scale_fill_manual(values = violin_colors) +
+    ylab("Node gain score") +
+    xlab(NULL)+
+    theme_classic()+
+    theme(axis.text.x = element_text(angle = 35, hjust = 1),
+          legend.position = "none",
+          plot.background = element_rect(color = node_cols[node], fill = "white", size = 6),
+          plot.margin = margin(t = 20, r = 6, b = 5.5, l = 10)) +
+    coord_cartesian(clip = "off") +
+    annotate("label", x = Inf, y = Inf, label = focal_nodes$full_name[focal_nodes$name == node], fill = "white", color = node_cols[node], size = 8, hjust = 1, fontface = "bold", linewidth = 1.2, alpha = 1) 
+  boxplots[[node]] <- plot
+  
+  ### stats for node gain enrichment
+  kruskal_results <- kruskal.test(node_gain_score ~ cell_type, data = cell_type_scores) 
+  
+  kruskal_tests <- rbind(kruskal_tests, data.frame(node = node, pval = kruskal_results$p.value, statistic = kruskal_results[["statistic"]][["Kruskal-Wallis chi-squared"]]))
+  
+  if (kruskal_results$p.value < 0.05) {
+    node_stats = data.frame(node = character(), cell_type = character(), pval = numeric(), W_statistic = numeric())
+    for (ct in unique(cell_type_scores$cell_type)) {
+      cell_type_exp <- cell_type_scores %>% filter(cell_type == ct & !is.na(node_gain_score)) %>% pull(node_gain_score)
+      bg_cells_exp <- cell_type_scores %>% filter(cell_type != ct & !is.na(node_gain_score)) %>% pull(node_gain_score)
+      
+      if (length(cell_type_exp) != 0) {
+        wilcox_test <- wilcox.test(cell_type_exp, bg_cells_exp, alternative = "greater")
+        node_stats <- rbind(node_stats, data.frame(node = node, cell_type = ct, pval = wilcox_test$p.value, W_statistic = wilcox_test[["statistic"]][["W"]]))
+      }
+      
+    }
+    node_stats$padj <- p.adjust(node_stats$pval, method = "BH")
+    wilcox_tests <- rbind(wilcox_tests, node_stats)
+  }
+    
+}
+
+# ------ cell type enrichment tile plot/heat map ------
+# make a named vector where names are full node names and values are the hex colors for the x axis 
+node_names <- focal_nodes %>% select(name, full_name)
+node_cols_full <- node_cols
+names(node_cols_full) <- node_names$full_name
+
+color_df <- wilcox_tests %>%
+  mutate(sig = ifelse(padj < 0.05, node_cols[node], 
+                      ifelse(padj < 0.10, lighten(node_cols[node], 0.4), "white"))) %>% 
+  complete(cell_type, node, fill = list(sig = "black")) # this adds extra rows so that nodes that are missing cell types can be colored black
+color_df <- color_df %>% left_join(node_names, by = c("node" = "name")) 
+
+# set the order of nodes on the x axis and then order both the df and node label colors accordingly
+x_axis_order <- c("Endocnidozoa + Medusozoa", "Medusozoa", "Hydrozoa", "Acraspeda", "Scyphozoa", "Cnidaria", "Anthozoa", "Octocorallia", "Ceriantheria + Hexacorallia", "Hexacorallia", "Actinaria","Scleractinia")
+color_df$full_name <- factor(color_df$full_name, levels = x_axis_order)
+x_axis_colors <- node_cols_full[x_axis_order]
+
+y_axis_order <- cell_type_order[length(cell_type_order):1]
+color_df$cell_type <- factor(color_df$cell_type, levels = y_axis_order)
+
+# categorical heat map to show significance
+tile_plot <- ggplot(color_df, aes(x = full_name, y = cell_type, fill = sig)) +
+  geom_tile(colour = "black", linewidth = 0.3) +
+  scale_fill_identity(na.value = "blue") +
+  xlab(NULL)+
+  ylab(NULL)+
+  theme_test() +
+  theme(axis.text.x = element_text(angle = 35, hjust = 1, color = x_axis_colors, size = 14),
+        axis.text.y = element_text(size = 14),
+        plot.margin = margin(t = 5, r = 5, b = 5, l = 5))
+
+# ------ SAMap figure for poster -------
+top_left <- cowplot::plot_grid(full_cell_type_plot, full_species_plot, nrow = 1, ncol = 2, labels = c("A", "B"), label_size = 24)
+bot_left <- cowplot::plot_grid(plotlist = plots[1:8], nrow = 2, ncol = 4, labels = c("E", "F", "G", "H", "J", "K", "L", "M"), label_size = 24, label_x = 0.015, label_y = 0.98)
+right <- cowplot::plot_grid(plotlist = plots[9:12], nrow = 4, ncol = 1, labels = c("C", "D", " I", "N"), label_size = 24, label_x = 0.015, label_y = 0.98)
+
+left <- cowplot::plot_grid(top_left, bot_left, nrow = 2, ncol = 1)
+samap_fig <- cowplot::plot_grid(left, right, nrow =1, ncol = 2, rel_widths = c(4,1))
 
 #pdf("figures/samap_exp.pdf", height = 20, width = 20)
 print(samap_fig)
-ggsave("figures/samap_exp.png", width = 25, height = 25)
+#ggsave("figures/samap_exp.png", width = 30, height = 24)
+
 #dev.off()
+
+# ------ SAMap figure for manuscript ------
+top <- cowplot::plot_grid(full_cell_type_plot, full_species_plot, tile_plot, nrow = 1, ncol = 3, labels = c("A", "B", "C"), label_size = 24, rel_widths = c(1,1,0.7))
+bot <- cowplot::plot_grid(plotlist = c(plots[5], plots[1], plots[9], plots[8], 
+                                       plots[6], plots[2], plots[10], plots[4],
+                                       plots[7], plots[3], plots[11], plots[12]), nrow = 3, ncol = 4, labels = c("D", "E", "F", "G", "H", " I", "J", "K", "L", "M", "N", "O"), label_size = 24, label_x = 0.015, label_y = 0.98)
+manuscript_figure_3 <- cowplot::plot_grid(top, bot, nrow = 2, ncol = 1, rel_heights = c(24/2.7, 18))
+print(manuscript_figure_3)
+#ggsave("../manuscript/figures/figure_3_SAMap.png", width = 24, height = 1*(24/2.7) + 3*6)
+
+#
+# ------ violins and boxplots for manuscript supplement ------
+violin_plot <- cowplot::plot_grid(plotlist = c(violin_plots[1], violin_plots[9], violin_plots[10], 
+                                               violin_plots[2], violin_plots[12], violin_plots[11],
+                                               violin_plots[3], violin_plots[5], violin_plots[4], 
+                                               violin_plots[7], violin_plots[6], violin_plots[8]), 
+                                  nrow = 4, ncol = 3, labels = c("A","B", "C", "D", "E", "F", "G", "H", " I", "J", "K", "L"),
+                                  label_size = 24, label_x = 0.015, label_y = 0.98)
+print(violin_plot)
+#ggsave("../manuscript/figures/supplement_SAMap_violins.png", width = 5*4, height = 5*4)
+
+boxplot <- cowplot::plot_grid(plotlist = c(boxplots[1], boxplots[9], boxplots[10],
+                                           boxplots[2], boxplots[12], boxplots[11],
+                                           boxplots[3], boxplots[5], boxplots[4], 
+                                           boxplots[7], boxplots[6], boxplots[8]), 
+                              nrow = 4, ncol = 3, labels = c("A","B", "C", "D", "E", "F", "G", "H", " I", "J", "K", "L"),
+                              label_size = 24, label_x = 0.015, label_y = 0.98)
+print(boxplot)
+
+#ggsave("../manuscript/figures/supplement_SAMap_boxplots.png", width = 5*4, height = 5*4)
+
+
+# -------  write results of enrichment stats -------
+kruskal_tests$padj <- p.adjust(kruskal_tests$pval, method = "BH")
+
+
+#write.table(kruskal_tests, file = "./kruskal_test_results.tsv",sep = "\t", row.names = FALSE, quote = FALSE)
+
+
+wilcox_tests <- wilcox_tests %>% left_join(node_names, by = c("node" = "name"))
+#write.table(wilcox_tests, file = "./wilcox_test_results.tsv",sep = "\t", row.names = FALSE, quote = FALSE)
+
+
+
+
+
+
+#saveRDS(cnid_scored, file = "cnid_samap.Rds")
+
+### saving plots for URC 
+for (node in names(plots)){
+  print(plots[[node]])
+  ggsave(paste0("figures/", node, "_umap.png"), width = 6, height = 6)
+}
+
+full_cell_type_plot
+#ggsave("figures/urc_cell_type_plot.png", width = 12, height = 12)
+
+full_species_plot
+#ggsave("figures/urc_species_plot.png", width = 12, height = 12)
 ```
+
+
+#3. cnidocyte expressed genes
+
+```{r cell type marker setup}
+load("../orthodollo/tree.Rds")
+tree <- tr1
+rm(tr1)
+print("tree loaded")
+
+load("../orthodollo/loss_gain_pres_abs_H1.Rds")
+gl <- lossgain.table
+#rm(lossgain.table)
+print("lossgain loaded")
+
+#gl <- as.data.frame(t(gl))
+#colnames(gl) <- as.character(1:ncol(gl))
+#gl$og <- rownames(gl)
+#print("gl prepped")
+
+gene_counts <- read.table("../orthodollo/Orthogroups.GeneCount.tsv", sep = "\t", header = TRUE) %>% dplyr::select(-Total)
+print("gene counts loaded")
+
+
+make_featureplot <- function(subset_seurat, orthogroup, cell_type_marker_genes, nodes_presence, node) {
+  marker_genes <- filter(cell_type_marker_genes, og == orthogroup) %>% pull(gene)
+  #print(marker_genes)
+  present_taxa <- nodes_presence$present[nodes_presence$node == node][[1]]
+  #print(present_taxa)
+  
+  subset_seurat <- AddModuleScore(subset_seurat, features = list(marker_genes), name = "markers")
+  
+  # if the species does not decend from the node, make it NA instead of 0 
+  subset_seurat$markers1 <- ifelse(subset_seurat$species %in% present_taxa, subset_seurat$markers1, NA)
+  na_cells <- colnames(subset_seurat)[is.na(subset_seurat[["markers1"]][,1])]
+  non_na_cells <- colnames(subset_seurat)[!is.na(subset_seurat[["markers1"]][,1])]
+  # shuffle order so it looks less blocky
+  non_na_cells <- sample(non_na_cells, length(non_na_cells), replace = FALSE)
+
+  plot <- FeaturePlot(subset_seurat, features = "markers1", reduction = "umap", cells = c(na_cells, non_na_cells)) +
+    scale_colour_gradientn(colors = c("yellow", "deeppink1", "blue")) + ggtitle(paste(node, orthogroup))
+    #theme(plot.background = element_rect(color = node_cols[node], fill = NA, size = 3)) +
+    #ggtitle(NULL))
+  
+  return(plot)
+}
+
+tree_plot <- ggtree(tree)
+
+# get the order of tips in the tree
+tree_data <- tree_plot$data
+tip_order <- tree_data %>%
+  dplyr::filter(isTip) %>%
+  dplyr::arrange(desc(y)) %>%
+  dplyr::pull(label)
+
+tree_plot <- ggtree(tree, branch.length = "none") + 
+  geom_tiplab(size = 2.75, align = TRUE) +
+  scale_y_reverse(limits = c(max(tree_data$y) + 0.5, min(tree_data$y) - 0.5), expand = c(0, 0)) +# the tree was upside down without this # the limits are to make sure nothing gets cut off, just to add a buffer
+  theme(plot.margin = margin(t = 23, r = 35, b = 28, l = 5)) +
+  coord_cartesian(clip = "off")
+
+
+make_tree_barplot <- function(tree_plot, orthogroup, tip_order) {
+  gene_counts_df <- gene_counts %>% filter(Orthogroup == orthogroup) %>% 
+    pivot_longer(cols = -Orthogroup, names_to = "species", values_to = "count")
+  gene_counts_df$species <- sub("_.*", "", gene_counts_df$species)
+  
+  total_og_size <- sum(gene_counts_df$count)
+  
+  bar_plot <- 
+    ggplot(gene_counts_df, aes(x = count, y = factor(species, levels = tip_order))) +  # rev is to reverse the species order because i flipped the tree
+    geom_col(fill = "#401bf7") +  # vertical bars; geom_col is shorthand for geom_bar(stat="identity")
+    theme_bw() +
+    theme(axis.title.y = element_blank(),
+          axis.text.y = element_blank(),
+          axis.ticks.y = element_blank())+
+    scale_y_discrete(expand = c(0, 0)) +
+    scale_x_continuous(expand = c(0, 0)) + # to make it start right at 0
+    theme(plot.margin = margin(l = 0, b = 0, t = 6))+
+    xlab("Number of genes in OG") +
+    ggtitle(paste("OG size:", total_og_size))
+  
+  plot <- plot_grid(tree_plot, bar_plot, nrow = 1, align = "v", axis = "tblr", rel_widths = c(2, 1))
+  return(plot)
+  
+}
+
+make_deepfri_plot <- function(orthogroup, cell_type) {
+  table <- read.table(file = file.path("./marker_orthogroup_annotations", paste0(cell_type, "_output"), "deepfri.tsv"), sep = "\t", quote = "")
+  colnames(table) <- c("og", "go_term","description", "count")
+  table <- table %>% mutate(deepfri = paste0(go_term, ": ", description))
+  plot <- ggplot(filter(table, og == orthogroup), aes(y = reorder(deepfri, count), x = count))+
+    geom_bar(stat = "identity", fill = "cornflowerblue") +
+    theme_bw() +
+    labs(x = "Number of annotations", y = "Deepfri function")
+  return(plot)
+}
+
+make_cdd_domain_plot <- function(orthogroup, cell_type) {
+  table <- read.table(file = file.path("./marker_orthogroup_annotations", paste0(cell_type, "_output"), "ncbi_cdd_domains.tsv"), sep = "\t", quote = "")
+  colnames(table) <- c("og", "cd", "count", "description")
+  table <- table %>% mutate(domain = paste0(cd, ": ", description))
+  plot <- ggplot(filter(table, og == orthogroup), aes(y = reorder(domain, count), x = count))+
+    geom_bar(stat = "identity", fill = "cornflowerblue") +
+    theme_bw() +
+    labs(x = "Number of annotations", y = "NCBI conserved domain")
+  return(plot)
+}
+
+make_cdd_superfamily_plot <- function(orthogroup, cell_type) {
+  table <- read.table(file = file.path("./marker_orthogroup_annotations", paste0(cell_type, "_output"), "ncbi_cdd_superfamilies.tsv"), sep = "\t", quote = "")
+  colnames(table) <- c("og", "cl", "count", "description")
+  table <- table %>% mutate(superfamily = paste0(cl, ": ", description))
+  plot <- ggplot(filter(table, og == orthogroup), aes(y = reorder(superfamily, count), x = count))+
+    geom_bar(stat = "identity", fill = "cornflowerblue") +
+    theme_bw() +
+    labs(x = "Number of annotations", y = "NCBI conserved domain")
+  return(plot)
+}
+
+make_pfam_plot <- function(orthogroup, cell_type) {
+  table <- read.table(file = file.path("./marker_orthogroup_annotations", paste0(cell_type, "_output"), "pfam.tsv"), sep = "\t", quote = "")
+  colnames(table) <- c("og", "accession", "description", "count")
+  table <- table %>% mutate(pfam = paste0(accession, ": ", description))
+  plot <- ggplot(filter(table, og == orthogroup), aes(y = reorder(pfam, count), x = count))+
+    geom_bar(stat = "identity", fill = "cornflowerblue") +
+    theme_bw() +
+    labs(x = "Number of annotations", y = "NCBI conserved domain")
+  return(plot)
+}
+
+```
+
+
+```{r cnidocyte markers}
+cnid_scored <- readRDS("cnid_samap.Rds")
+
+emb <- cnid_scored@reductions$umap@cell.embeddings
+cells_to_keep <- rownames(emb)[emb[, "UMAP_1"] > -0.5 & emb[, "UMAP_1"] < 8.75 & emb[, "UMAP_2"] < -4 & emb[, "UMAP_2"] > -17]
+subset_seurat <- subset(cnid_scored, cells = cells_to_keep)
+rm(cnid_scored)
+rm(seurat)
+rm(emb)
+
+species_list <- SplitObject(subset_seurat, split.by = "species")
+
+all_markers <- data.frame(p.val = numeric(), avg_log2FC = numeric(), pct.1 = numeric(), pct.2 = numeric(), p_val_adj = numeric(), cluster = character(), gene = character(), species = character())
+
+# for each species, find the marker genes and add to the all_markers dataframe
+for (species_seurat in species_list) {
+  species_name <- unique(species_seurat$species)
+  print(species_name)
+  markers_df <- FindAllMarkers(species_seurat, only.pos = TRUE, group.by = "cell_type", min.pct = 0.10, logfc.threshold = 1) #logfc set to 1 for cnidocytes, 2.5 for battery cells, and 0.75 for alga-hosting cells, 0.5 for calicoblasts
+  markers_df <- merge(markers_df, ogmap, by.x = "gene", by.y = "sc_ID") %>% 
+    mutate(species = species_name)
+  all_markers <- rbind(markers_df, all_markers)
+}
+
+# cell type of interest
+cell_type = "Cnidocyte"
+
+# gets the species and orthogroup for all markers for the cell type of interest
+cell_type_marker_genes <- filter(all_markers, cluster == cell_type) 
+length(unique(cell_type_marker_genes$og))
+
+cnidofest_example_df <- cell_type_marker_genes %>% filter(pct.1 > 0.5 & pct.2 < 0.25)
+
+top100 <- cnidofest_example_df %>% arrange(desc(avg_log2FC)) %>% slice_head(n= 100) %>% select(og)
+write.table(top100, file = "top100_cnidocyte_markers.txt", sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE)
+
+cell_type_markers <- cell_type_marker_genes %>% select(species, og) %>%  unique()
+
+# counts how many unique species contain markers in this cell type
+cell_type_markers <- cell_type_markers %>% group_by(og) %>% mutate(count = n()) %>%  select(-species) %>% unique()
+
+cnid_pres_ogs <- colnames(lossgain.table)[lossgain.table[102, ] == "p"]
+cnid_pres_markers <- cell_type_markers %>% filter(og %in% cnid_pres_ogs) %>% filter(count >= 3) %>% 
+  mutate(full_name = "Cnidaria_Present") %>% select(-count)
+
+# filters the cell type markers to only include orthogroups present in at least as many taxa for the node specified in requirements$taxa
+gain_nodes <- focal_nodes %>% select(full_name, ogs) %>% unnest(ogs)
+requirements <- data.frame(full_name = c("Anthozoa", "Ceriantheria + Hexacorallia", "Endocnidozoa + Medusozoa", "Medusozoa", 
+                                         "Hydrozoa", "Acraspeda", "Octocorallia", "Hexacorallia", 
+                                         "Scleractinia", "Scyphozoa", "Cnidaria", "Actinaria", "Cnidaria_Present"),
+                           taxa = c(2,2,1,1, # for cnidocytes: 2,2,2,2, 1,1,1,2, 1,1,3,1 ### for calicoblasts: 1,1,1,1, 1,1,1,1, 1,1,1,1
+                                    1,1,1,1, # for battery cells: 1,1,1,1, 1,1,1,1, 1,1,1,1 ### for foot: 1,1,1,1, 1,1,1,1, 1,1,1,1
+                                    1,1,3,1,3)) # for alga-hosting cells: 1,1,1,1, 1,1,1,1, 1,1,1,1
+cell_type_markers <- merge(cell_type_markers, gain_nodes, by.x = "og", by.y = "ogs")
+cell_type_markers <- merge(cell_type_markers, requirements, by = "full_name")
+filtered_markers <- filter(cell_type_markers, count >= taxa) %>% select(full_name, og)
+
+filtered_markers <- rbind(filtered_markers, cnid_pres_markers)
+
+#write.table(select(filtered_markers, og), col.names = FALSE, quote = FALSE, row.names = FALSE, file = paste0(cell_type, "_orthogroup_markers.txt"))
+
+### Pause here and run the cell annotations pipeline in python on this list of OrthoGroups
+
+present_list <- list(c("xenia", "nematostella", "acropora"), c("nematostella", "acropora"), c("hydra", "aurelia"), c("hydra", "aurelia"), 
+                     c("hydra"), c("aurelia"), c("xenia"), c("nematostella", "acropora"),
+                     c("acropora"), c("aurelia"), c("xenia", "nematostella", "aurelia", "hydra", "acropora"), c("nematostella"),
+                     c("xenia", "nematostella", "aurelia", "hydra", "acropora"))
+
+nodes_presence <- data.frame(node = requirements$full_name, present = I(present_list))
+
+ogmap_filtered <- ogmap %>% filter(sc_ID %in% rownames(subset_seurat))
+
+count <- 0
+
+for (node in nodes_presence$node) {
+  print(node)
+  pdf(paste0("figures/", cell_type, "_", node, "_featureplots.pdf"), width = 20, height = 20)
+  orthogroups <- filtered_markers %>% filter(full_name == node) %>% pull(og)
+  for (orthogroup in orthogroups) {
+    count <- count + 1 
+    print(count)
+    print(orthogroup)
+    
+    umap <- make_featureplot(subset_seurat, orthogroup, cell_type_marker_genes, nodes_presence, node)
+    tree_barplot <- make_tree_barplot(tree_plot, orthogroup, tip_order)
+    
+    deepfri_plot <- make_deepfri_plot(orthogroup, cell_type)
+    ncbi_domain_plot <- make_cdd_domain_plot(orthogroup, cell_type)
+    ncbi_superfamily_plot <- make_cdd_superfamily_plot(orthogroup, cell_type)
+    pfam_plot <- make_pfam_plot(orthogroup, cell_type)
+    
+    top_row <- plot_grid(umap, tree_barplot, nrow = 1)
+    mid_row <- plot_grid(deepfri_plot, ncbi_domain_plot, nrow = 1, rel_widths = c(2,1))
+    bot_row <- plot_grid(pfam_plot, ncbi_superfamily_plot, nrow = 1)
+    
+    print(plot_grid(top_row, mid_row, bot_row, ncol = 1, rel_heights = c(1.5, 1, 1)))
+    
+  }
+  dev.off()
+}
+dev.off()
+#write.table(select(filtered_markers, og), col.names = FALSE,quote = FALSE, row.names = FALSE, file = paste0(cell_type, "_orthogroup_markers.txt"))
+
+# visualizing the expression of marker OGs
+
+
+```
+
+
+```{r alga-hosting cell markers}
+
+cnid_scored <- readRDS("cnid_samap.Rds")
+emb <- cnid_scored@reductions$umap@cell.embeddings
+cells_to_keep <- rownames(emb)[emb[, "UMAP_1"] > -0.5 & emb[, "UMAP_1"] < 8.75 & emb[, "UMAP_2"] < -4 & emb[, "UMAP_2"] > -17]
+subset_seurat <- subset(cnid_scored, cells = cells_to_keep)
+rm(cnid_scored)
+rm(seurat)
+rm(emb)
+
+species_list <- SplitObject(subset_seurat, split.by = "species")
+
+all_markers <- data.frame(p.val = numeric(), avg_log2FC = numeric(), pct.1 = numeric(), pct.2 = numeric(), p_val_adj = numeric(), cluster = character(), gene = character(), species = character())
+
+# for each species, find the marker genes and add to the all_markers dataframe
+for (species_seurat in species_list) {
+  species_name <- unique(species_seurat$species)
+  print(species_name)
+  markers_df <- FindAllMarkers(species_seurat, only.pos = TRUE, group.by = "cell_type") # default min.pct and logfc.threshold parameters for alga-hosting cells
+  markers_df <- merge(markers_df, ogmap, by.x = "gene", by.y = "sc_ID") %>% 
+    mutate(species = species_name)
+  all_markers <- rbind(markers_df, all_markers)
+}
+
+# cell type of interest
+cell_type = "Alga-hosting cell"
+
+gain_nodes <- focal_nodes %>% select(full_name, ogs) %>% unnest(ogs)
+
+myr_pres_ogs <- colnames(lossgain.table)[lossgain.table[99, ] == "p"]
+myr_pres_markers <- all_markers %>% filter(og %in% myr_pres_ogs) %>% 
+  mutate(full_name = "Myriazoa_Present") %>% 
+  filter(species %in% c("acropora", "xenia")) %>% 
+  filter(cluster == "Alga-hosting cell") 
+
+markers <- merge(all_markers, gain_nodes, by.x = "og", by.y = "ogs") %>% 
+  filter(species %in% c("acropora", "xenia")) %>% 
+  filter(cluster == "Alga-hosting cell") %>% 
+  filter(full_name %in% c("Myriazoa", "Planulozoa", "Eumetazoa","Cnidaria", "Anthozoa", "Octocorallia", "Scleractinia"))
+
+markers <- rbind(myr_pres_markers, markers)
+
+# Making this column a factor sets the order that the nodes will appear in the plot
+markers$full_name <- factor(markers$full_name, levels = c("Myriazoa_Present", "Myriazoa", "Planulozoa", "Eumetazoa", "Cnidaria", "Anthozoa", "Octocorallia", "Scleractinia"))
+
+
+pdf("figures/alga_hosting_cell_markers.pdf")
+# boxplot showing the logfc of marker genes for algahosting cells for different gain nodes
+ggplot(data = markers, aes(y = avg_log2FC, x = full_name)) +
+  geom_boxplot() +
+  xlab("Gain node")
+
+# analysis of variance + tukey test to see if the above is significant 
+model <- aov(avg_log2FC ~ full_name, data = markers)
+summary(model)
+TukeyHSD(model)
+
+# histogram of log2fc for alga-hosting cell markers 
+ggplot(data = markers, aes(x = avg_log2FC))+
+  geom_histogram(fill = "blue3", col = "black") 
+
+# creating a categorical variable for high vs low logFC 
+markers <- markers %>% mutate(logfc_cat = ifelse(avg_log2FC < 4, "low", "high"))
+
+# make high logFC on the bottom of the barplot
+markers$logfc_cat <- factor(markers$logfc_cat, levels = c("low", "high"))
+
+# stacked barplot showing gain nodes for marker genes with high logfc vs low logfc
+ggplot(data = markers, aes(x = full_name, fill = logfc_cat)) +
+  geom_bar(stat = "count") +
+  xlab("Gain node") +
+  ylab("Number of marker genes")
+
+dev.off()
+
+
+```
+
+
+
+```{r cnidocyte_markers}
+
+cnid_scored <- readRDS("cnid_samap.Rds")
+emb <- cnid_scored@reductions$umap@cell.embeddings
+cells_to_keep <- rownames(emb)[emb[, "UMAP_1"] > -0.5 & emb[, "UMAP_1"] < 8.75 & emb[, "UMAP_2"] < -4 & emb[, "UMAP_2"] > -17]
+subset_seurat <- subset(cnid_scored, cells = cells_to_keep)
+
+cnidocyte_markers <- read.table("/Users/oliviatatro/Downloads/surf/single_cell/cnidocyte_markers.tsv", sep = "\t", header = TRUE)
+
+cnidocyte_markers$genus <- gsub("acropora_unwounded", "acropora", cnidocyte_markers$genus)
+cnidocyte_markers$genus <- gsub("acropora_wounded", "acropora", cnidocyte_markers$genus)
+
+nodes = c("anth", "anth2", "hex", "acr", 
+          "oct", "act", "scler", "scyph", 
+          "cnid", "endomed", "med", "hyd")
+
+present_list <- list(c("xenia", "nematostella", "acropora"), c("nematostella", "acropora"), c("nematostella", "acropora"), c("aurelia"), 
+                     c("xenia"), c("nematostella"), c("acropora"), c("aurelia"),
+                     c("xenia", "nematostella", "aurelia", "hydra", "acropora"), c("hydra", "aurelia"), c("hydra", "aurelia"), c("hydra"))
+
+cnidocyte_nodes <- data.frame(node = nodes, num_taxa = c(2, 2, 2, 1, 1, 1, 1, 1, 4, 2, 2, 1),
+                              present = I(present_list))
+
+marker_gains <- list()
+
+for(row in 1:nrow(cnidocyte_nodes)){
+  marker_gains[[cnidocyte_nodes$node[row]]] <- cnidocyte_markers %>% filter(gain_node == cnidocyte_nodes$node[row]) %>%  select(og, genus) %>% unique() %>% 
+  group_by(og) %>% summarize(num_genera = n()) %>% filter(num_genera == cnidocyte_nodes$num_taxa[row]) %>% pull(og)
+}
+
+ogmap_filtered <- ogmap %>% filter(sc_ID %in% rownames(subset_seurat))
+
+pdf("figures/cnidocyte_featureplots.pdf")
+for (node in nodes) {
+  print(node)
+  for (orthogroup in marker_gains[[node]]) {
+    cnid_genes <- ogmap_filtered %>% filter(og == orthogroup) %>% pull(sc_ID)
+    print(cnid_genes)
+    present_taxa <- cnidocyte_nodes$present[cnidocyte_nodes$node == node][[1]]
+    print(present_taxa)
+    
+    tryCatch({
+      subset_seurat <- AddModuleScore(subset_seurat, features = list(cnid_genes), name = "markers")
+      
+      # if the species does not decend from the node, make it NA instead of 0 
+      subset_seurat$markers1 <- ifelse(subset_seurat$species %in% present_taxa, subset_seurat$markers1, NA)
+      na_cells <- colnames(subset_seurat)[is.na(subset_seurat[["markers1"]][,1])]
+      non_na_cells <- colnames(subset_seurat)[!is.na(subset_seurat[["markers1"]][,1])]
+      # shuffle order so it looks less blocky
+      non_na_cells <- sample(non_na_cells, length(non_na_cells), replace = FALSE)
+      
+      print(FeaturePlot(subset_seurat, features = "markers1", reduction = "umap", cells = c(na_cells, non_na_cells)) +
+        scale_colour_gradientn(colors = c("yellow", "deeppink1", "blue")) + ggtitle(paste(node, orthogroup)))
+        #theme(plot.background = element_rect(color = node_cols[node], fill = NA, size = 3)) +
+        #ggtitle(NULL))
+      },
+      error = function(e) {
+        print(e)
+        print(FeaturePlot(subset_seurat, features = cnid_genes) + ggtitle(paste(node, orthogroup)))
+      }
+    )
+  }
+}
+
+dev.off()
+
+
+```
+
+
+```{r cnidocyte_genes_old}
+
+cnid_scored <- readRDS("cnid_samap.Rds")
+
+# extract just cnidocytes
+cnidocytes <- subset(cnid_scored, cell_type == "Cnidocyte")
+
+DimPlot(cnidocytes, reduction = "umap", group.by = "species", cols = c("#0072B2", "#009E73", "#D55E00", "#CC79A7", "#683c98"))
+
+# filter ogmap for genes in the cnidocyte seurat
+cnid_ogmap <- ogmap %>% filter(sc_ID %in% rownames(cnidocytes))
+
+# mapping the normalized layer names to the species
+layer_to_species <- c(
+  "data.1" = "acropora",
+  "data.2" = "aurelia",
+  "data.3" = "hydra",
+  "data.4" = "nematostella",
+  "data.5" = "xenia"
+)
+
+data_layers <- grep("^data\\.", Layers(cnidocytes[["RNA"]]), value = TRUE)
+
+# for each species, summarize the mean expression of each gained OG in cnidocytes
+og_expr_list_cnid <- lapply(data_layers, function(layer) {
+  expr <- GetAssayData(cnidocytes, assay = "RNA", layer = layer)
+  cnid_ogmap %>% group_by(og) %>% summarize(!!layer_to_species[layer] := mean(expr[sc_ID, , drop = FALSE] |> rowMeans(), na.rm = TRUE), .groups = "drop") # rowMeans gets the average expression of each gene. mean(averages each gene's averages within the OG)
+})
+
+# combine the list of dfs from each species
+og_expr_df_cnid <- Reduce(function(x,y) {
+  full_join(x, y, by = "og")
+}, og_expr_list_cnid) 
+
+# total the expression of each OG in all species 
+og_expr_df_cnid <- og_expr_df_cnid %>% mutate(total_cnid = rowSums(across(where(is.numeric)), na.rm = TRUE))
+
+
+
+
+
+
+### repeat the above, but with all cell types that are not cnidocytes
+# extract non cnidocytes
+not_cnidocytes <- subset(cnid_scored, cell_type != "Cnidocyte")
+
+saveRDS(not_cnidocytes, file = "not_cnidocytes.Rds")
+
+DimPlot(not_cnidocytes, reduction = "umap", group.by = "species", cols = c("#0072B2", "#009E73", "#D55E00", "#CC79A7", "#683c98"))
+
+# filter ogmap for genes in the non cnidocyte seurat
+not_cnid_ogmap <- ogmap %>% filter(sc_ID %in% rownames(not_cnidocytes))
+
+# for each species, summarize the mean expression of each gained OG in non cnidocyte cells
+og_expr_list <- lapply(data_layers, function(layer) {
+  expr <- GetAssayData(not_cnidocytes, assay = "RNA", layer = layer)
+  not_cnid_ogmap %>% group_by(og) %>% summarize(!!layer_to_species[layer] := mean(expr[sc_ID, , drop = FALSE] |> rowMeans(), na.rm = TRUE), .groups = "drop") # rowMeans gets the average expression of each gene. mean(averages each gene's averages within the OG)
+})
+
+# combine the list of dfs from each species
+og_expr_df <- Reduce(function(x,y) {
+  full_join(x, y, by = "og")
+}, og_expr_list) 
+
+# total the expression of each OG in all species 
+og_expr_df <- og_expr_df %>% mutate(total = rowSums(across(where(is.numeric)), na.rm = TRUE))
+
+
+
+
+all <- merge(og_expr_df, og_expr_df_cnid, by = "og") %>% select(og, total, total_cnid) %>% 
+  mutate(`cnid-total` = total_cnid - total) %>% 
+  mutate(`cnid/total` = total_cnid / total)
+
+# needs to have at least 1 for log expression of the OG in cnidocytes, and needs to be expressed more in cnidocytes
+cnid_enriched <- all %>% filter(total_cnid > 1 & `cnid/total` > 1)
+
+
+nodes = c("anth", "anth2", "hex", "acr", 
+          "oct", "act", "scler", "scyph", 
+          "cnid", "endomed", "med", "hyd")
+
+cnid_gain_ogs <- list()
+# find the OGs that are expressed the most high in cnidocytes compared to other cell types
+for (node in nodes) {
+  print(node)
+  highest_ogs <- list()
+  ogs_gained <- focal_nodes[focal_nodes$name == node,]$ogs
+  node_gains <- cnid_enriched %>% filter(og %in% ogs_gained[[1]])
+  if (nrow(node_gains) > 0){
+    cnid_gain_ogs[node] <- list(node_gains$og)
+  }
+  high_ogs_1 <- node_gains %>% arrange(desc(total_cnid)) %>% slice(1:10)
+  high_ogs_2 <- node_gains %>% arrange(desc(`cnid-total`)) %>% slice(1:10)
+  high_ogs_3 <- node_gains %>% arrange(desc(`cnid/total`)) %>% slice(1:10)
+  print(high_ogs_3)
+}
+
+pdf("figures/cnidocyte_featureplots.pdf")
+for (node in nodes) {
+  print(node)
+  for (orthogroup in cnid_gain_ogs[node][[1]]) {
+    cnid_genes <- ogmap_filtered %>% filter(og == orthogroup) %>% pull(sc_ID)
+    print(orthogroup)
+    print(FeaturePlot(cnid_scored, features = cnid_genes) + ggtitle(paste(node, orthogroup)))
+  }
+}
+dev.off()
+ogmap_filtered %>% filter(og %in% cnid_gain_ogs["cnid"][[1]]) %>% arrange(og)
+```
+
+
+#4. gained orthogroup expression by node
+
+```{r}
+cnid_scored <- readRDS("cnid_samap.Rds")
+
+nodes = c("anth", "anth2", "hex", "acr", 
+          "oct", "act", "scler", "scyph", 
+          "cnid", "endomed", "med", "hyd")
+
+emb <- cnid_scored@reductions$umap@cell.embeddings
+cells_to_keep <- rownames(emb)[emb[, "UMAP_1"] > -0.5 & emb[, "UMAP_1"] < 8.75 & emb[, "UMAP_2"] < -4 & emb[, "UMAP_2"] > -17]
+cnid_subset <- subset(cnid_scored, cells = cells_to_keep)
+rm(cnid_scored)
+
+pdf("figures/jitter_plots.pdf")
+for (node in nodes) {
+  
+  ogs_gained <- focal_nodes[focal_nodes$name == node,]$ogs
+  genes_gained <- filter(ogmap, og %in% unlist(ogs_gained))
+    
+  genes_gained <- genes_gained$sc_ID
+  gene_gain_filtered <- intersect(genes_gained, rownames(cnid_subset))
+  
+  #cnid_subset <- AddModuleScore(cnid_subset, features = list(gene_gain_filtered), name = "node_gain_score")
+  
+  # unify module score into one column
+  cnid_subset$node_gain_score <- NA
+  
+  print(node)
+  
+  for (sp in unique(cnid_subset$species)) {
+      colname <- paste0("Module_", sp, "_", node, "_1")
+      idx <- cnid_subset$species == sp
+      cnid_subset$node_gain_score[idx] <- cnid_subset[[colname]][,1][idx]
+  }
+  
+  gain_expr <- data.frame(cells = colnames(cnid_subset), node_gain_score = cnid_subset$node_gain_score, 
+                          cell_type = cnid_subset$cell_type, species = cnid_subset$species)
+  
+  plot <- ggplot(data = gain_expr, aes(x = cell_type, y = node_gain_score)) +
+    geom_jitter(size = 0.1, aes(colour = species)) +
+    ggtitle(node) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  print(plot)
+}
+dev.off()
+```
+
+
+
+
+
+
+
