@@ -1,14 +1,11 @@
 # og_gain_loss_cnidaria
-This project aims to increase our understanding of genomic mechanisms that lead to the evolution of complex traits in Cnidaria. 
+In this project, we integrate gene gain and loss inference, functional annotation of uncharacterized gene sequences, and comparative single-cell RNA sequencing analysis to investigate the evolution of novel organismal traits and cell types in Cnidaria. Specifically, we focus on the evolution of the medusa life history stage in Medusozoa, parasitism in Endocnidozoa, symbiosis in Anthozoa, and the evolution and diversification of cnidocytes. 
 
-# Data: 
-- Proteomes of 72 cnidarians, 3 ctenophores, 6 sponges, Trichoplax, and 15 bilaterians
-- Single cell RNA sequencing data from _Hydra vulgaris_, _Aurelia coerulea_, _Xenia sp._, _Nematostella vectensis_, and _Acropora millepora_
+### Gene gain and loss inference
+We gather proteomes from 72 cnidarians and 25 outgroup species and assign genes into orthogroups. Following the conceptual framework of dollo parsimony, we determine the gain and loss history of the orthogroups based on our phylogenetic tree and the presence or absence of genes in each orthogroup in each extant species. 
 
-# Objectives: 
-1. Determine orthogroup gains and losses within Cnidaria and summarize the overall functions that were gained and lost at focal nodes.
-2. Examine the expression patterns of orthogroups gained at focal nodes in extant species.
-3. Identify gains and losses of Gene Expression Programs within Cnidaria and visualize their expression in extant species.
-4. Investigate the sequences of gene gain and loss that led to the origin and diversification of cnidocytes.
+### Functional annotation
+We annotate genes gained and lost at each node with GO terms using DeepFRI, cluster annotations of gained and lost genes using GO-Figure, and group the GO clusters into broad functional categories with Microsoft Copilot. We also use EggNOG to annotate sequences with COGs. For both analyses, we determined 
 
-Email me at Olivia.Tatro@unh.edu if you have any questions or comments!
+### scRNA-seq analysis
+We gather scRNA-seq datasets from 5 cnidarian species and integrate them into one large dataset with SAMap. We then analyze the collective expression patterns of genes gained at cnidarian focal nodes. We identify and further annotate orthogroups that were gained at many focal nodes that had enriched expression in cnidocytes, reconstructing the evolution and diversification of cnidocytes.
