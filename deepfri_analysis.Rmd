@@ -4,34 +4,61 @@ output: html_document
 ---
 
 ```{r import}
-library(this.path)
-setwd(this.dir())
-library(ggtree)
-library(tidyverse)
-library(cowplot)
-library(grid)
+library(dplyr)
+setwd("/Users/oliviatatro/Downloads/surf/deepfri")
 
-load("deepfri.Rdata")
+load("deepfri50.Rdata")
 print("deepfri loaded")
-bp <- bp %>% rename(GO = GO_term.EC_number, name = GO_term.EC_number.name)
-cc <- cc %>% rename(GO = GO_term.EC_number, name = GO_term.EC_number.name)
-mf <- mf %>% rename(GO = GO_term.EC_number, name = GO_term.EC_number.name)
 
 focal_nodes <- data.frame(
-  node_name = c("anth", "anth2", "endomed", "med", "endo", "scs", "hyd", "myx", "hex", "cer", "oct"),
-  node_name_full = c("Anthozoa", "Anthozoa2", "Endocnidozoa_Medusozoa", "Medusozoa", "Endocnidozoa", "Staurozoa_Cubozoa_Scyphozoa", "Hydrozoa", "Myxozoa", "Hexacorallia", "Ceriantheria", "Octocorallia"),
-  GO_df = c("anth_GO", "anth2_GO", "endomed_GO", "med_GO", "endo_GO", "scs_GO", "hyd_GO", "myx_GO", "hex_GO", "cer_GO", "oct_GO"),
-  node_number = c(86, 87 ,84 ,83 ,129, 132, 82, 130, 88, 113, 117)
-  )
+    node = c(132, 133, 103, 104, 129, 
+             130, 105, 116, 163, 159, 
+             134, 137, 120, 108, 102, 
+             150,   2,  22,  87,  88, 
+             90,   74,  42,  11, 106,
+             114, 117, 121, 122, 164, 
+             166, 135, 136, 138, 139,
+             140,  99, 100, 101),
+    name = c("anth", "anth2", "endomed", "med", "endo", 
+             "myx", "hyd", "acr", "oct", "cer", 
+             "hex", "scler", "scyph", "siph", "cnid", 
+             "act", "acropora", "nematostella", "hydra", "clytia",
+             "turritopsis", "aurelia", "xenia", "stylophora", "106",
+             "114", "117", "121", "122", "164", 
+             "166", "135", "136", "138", "139",
+             "140", "myr", "plan", "eum"),
+    full_name = c("Anthozoa", "Ceriantheria + Hexacorallia", "Endocnidozoa + Medusozoa", "Medusozoa", "Endocnidozoa",
+                  "Myxozoa", "Hydrozoa", "Acraspeda", "Octocorallia", "Ceriantheria", 
+                  "Hexacorallia", "Scleractinia", "Scyphozoa", "Siphonophora", "Cnidaria",
+                  "Actinaria", "Acropora", "Nematostella", "Hydra", "Clytia", 
+                  "Turritopsis", "Aurelia", "Xenia", "Stylophora", "106",
+                  "114", "117", "121", "122", "164", 
+                  "166", "135", "136", "138", "139",
+                  "140", "Myriazoa", "Planulozoa", "Eumetazoa")
+    )
+
+node_cols <- c("#E7468E", "#e34a32","#DA71FE", "#4991FE", "#8E10D2",
+               "#590D8F",  "#2448D8", "#2ED9FF", "#9e021c", "#9bcc1f",
+               "#fa7e18","#0a7d23","#1FD295", "#0e0c70","#e08dc9",
+               "#e3af02", "grey20", "grey20","grey20","grey20",
+               "grey20","grey20","grey20","grey20", "grey20",
+               "grey20","grey20","grey20","grey20", "grey20",
+               "grey20","grey20","grey20","grey20", "grey20",
+               "grey20", "grey20","grey20","grey20")
+node_cols_full <- node_cols
+names(node_cols) <- focal_nodes$name
+names(node_cols_full) <- focal_nodes$full_name
 
 
 load("../orthodollo/tree.Rds")
 tree <- tr1
 rm(tr1)
+print("tree loaded")
 
 load("../orthodollo/loss_gain_pres_abs_H1.Rds")
 gl <- lossgain.table
 rm(lossgain.table)
+print("lossgain loaded")
 
 ```
 
@@ -46,62 +73,107 @@ colnames(gl) <- as.character(1:ncol(gl))
 gl$og <- rownames(gl)
 print("gl prepped")
 
+og_summary <- data.frame(node = character(), event = character(), og = character())
+
+for (node in 98:193) {
+  print(node)
+  gained <- gl[gl[[node]] == "g", node, drop = FALSE] 
+  gained <- data.frame(og = rownames(gained))
+  if(nrow(gained) > 0) {
+    gained$node <- node
+    gained$event <- "gain"
+    og_summary <- rbind(og_summary, gained)
+  }
+  
+  lost <- gl[gl[[node]] == "l", node, drop = FALSE] 
+  lost <- data.frame(og = rownames(lost))
+  if(nrow(lost) > 0) {
+    lost$node <- node
+    lost$event <- "lost"
+    og_summary <- rbind(og_summary, lost)
+  }
+}
+
+write.table(og_summary, file = "og_summary.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
+
+# goal: node event og
+
 bp_OG_GO <- bp %>% mutate(og = sub("_.*", "", Protein)) %>% 
   dplyr::select(og, GO) %>% 
   group_by(og) %>% 
   summarize(GOs = paste(GO, collapse = ","), .groups = "drop")
+table(strsplit(bp_OG_GO$GOs[1], ","))
 print("bp collapsed")
 
 cc_OG_GO <- cc %>% mutate(og = sub("_.*", "", Protein)) %>% 
   dplyr::select(og, GO) %>% 
   group_by(og) %>% 
   summarize(GOs = paste(GO, collapse = ","), .groups = "drop")
+table(strsplit(cc_OG_GO$GOs[1], ","))
 print("cc collapsed")
 
 mf_OG_GO <- mf %>% mutate(og = sub("_.*", "", Protein)) %>% 
   dplyr::select(og, GO) %>% 
   group_by(og) %>% 
   summarize(GOs = paste(GO, collapse = ","), .groups = "drop")
+table(strsplit(mf_OG_GO$GOs[1], ","))
 print("mf collapsed")
 
 bp_GOs <- data.frame(node = character(), g_GOs = vector(), l_GOs = vector())
 cc_GOs <- data.frame(node = character(), g_GOs = vector(), l_GOs = vector())
 mf_GOs <- data.frame(node = character(), g_GOs = vector(), l_GOs = vector())
 
-for (NODE in 1:151) {
-  print(paste("starting node: ", NODE))
+for (NODE in 1:193) {
+  
+  if (NODE %in% focal_nodes$node) {
+    print(paste("starting node: ", NODE))
 
-  gained <- gl[gl[[NODE]] == "g", NODE, drop = FALSE] 
-  gained$og <- rownames(gained) 
-  lost <- gl[gl[[NODE]] == "l", NODE, drop = FALSE] 
-  lost$og <- rownames(lost) 
+    gained <- gl[gl[[NODE]] == "g", NODE, drop = FALSE] 
+    gained$og <- rownames(gained) 
+    lost <- gl[gl[[NODE]] == "l", NODE, drop = FALSE] 
+    lost$og <- rownames(lost) 
   
-  #bp
-  gained_GOs <- merge(bp_OG_GO, gained) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
-    summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
-  lost_GOs <- merge(bp_OG_GO, lost) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
-    summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
+    #bp
+    gained_GOs <- merge(bp_OG_GO, gained) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
+      summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
+    lost_GOs <- merge(bp_OG_GO, lost) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
+      summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
   
-  bp_GOs <- rbind(bp_GOs, data.frame(node = NODE, g_GOs = I(list(strsplit(gained_GOs$GOs[1], ",")[[1]])), l_GOs = I(list(strsplit(lost_GOs$GOs[1], ",")[[1]]))))
+    bp_GOs <- rbind(bp_GOs, data.frame(node = NODE, g_GOs = I(list(strsplit(gained_GOs$GOs[1], ",")[[1]])), l_GOs = I(list(strsplit(lost_GOs$GOs[1], ",")[[1]]))))
   
-  #cc
-  gained_GOs <- merge(cc_OG_GO, gained) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
-    summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
-  lost_GOs <- merge(cc_OG_GO, lost) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
-    summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
-  cc_GOs <- rbind(cc_GOs, data.frame(node = NODE, g_GOs = I(list(strsplit(gained_GOs$GOs[1], ",")[[1]])), l_GOs = I(list(strsplit(lost_GOs$GOs[1], ",")[[1]]))))
+    #cc
+    gained_GOs <- merge(cc_OG_GO, gained) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
+      summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
+    lost_GOs <- merge(cc_OG_GO, lost) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
+      summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
+    cc_GOs <- rbind(cc_GOs, data.frame(node = NODE, g_GOs = I(list(strsplit(gained_GOs$GOs[1], ",")[[1]])), l_GOs = I(list(strsplit(lost_GOs$GOs[1], ",")[[1]]))))
   
-  #mf
-  gained_GOs <- merge(mf_OG_GO, gained) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
-    summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
-  lost_GOs <- merge(mf_OG_GO, lost) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
-    summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
-  mf_GOs <- rbind(mf_GOs, data.frame(node = NODE, g_GOs = I(list(strsplit(gained_GOs$GOs[1], ",")[[1]])), l_GOs = I(list(strsplit(lost_GOs$GOs[1], ",")[[1]]))))
+    #mf
+    gained_GOs <- merge(mf_OG_GO, gained) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
+      summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
+    lost_GOs <- merge(mf_OG_GO, lost) %>% select(-og) %>% group_by(!!sym(as.character(NODE))) %>% 
+      summarize(GOs = paste(GOs, collapse = ","), .groups = "drop")
+    mf_GOs <- rbind(mf_GOs, data.frame(node = NODE, g_GOs = I(list(strsplit(gained_GOs$GOs[1], ",")[[1]])), l_GOs = I(list(strsplit(lost_GOs$GOs[1], ",")[[1]]))))
+  }
+  else {
+  print(paste("Skipping node:", NODE))
+  bp_GOs <- rbind(bp_GOs, data.frame(node = NODE, g_GOs = NA, l_GOs = NA))
+  cc_GOs <- rbind(cc_GOs, data.frame(node = NODE, g_GOs = NA, l_GOs = NA))
+  mf_GOs <- rbind(mf_GOs, data.frame(node = NODE, g_GOs = NA, l_GOs = NA))
+  }
 }
+
 print("setup done")
+
 ```
 
 ```{r GO_setup}
+
+safe_fisher <- function(a, b, c, d) {
+  mat <- matrix(c(a, b - a, c, d - c), nrow = 2, byrow = TRUE)
+  if (any(mat < 0) || any(is.na(mat)) || any(!is.finite(mat))) return(1)
+  fisher.test(mat, alternative = "greater")$p.value
+}
 
 GO_setup <- function(DATA, NODE) {
   
@@ -151,11 +223,16 @@ GO_setup <- function(DATA, NODE) {
     d = as.numeric(length(all_GO_gains))
     all_GO_gain_counts <- table(all_GO_gains)
     
+    GO_counts <- GO_counts %>% 
+  	filter(!is.na(GO_term) & grepl("^GO:", GO_term))
+    
     GO_counts$pval_gain <- apply(GO_counts, 1, function(row) {
       a <- as.numeric(row["gained"])
-      c <- as.numeric(all_GO_gain_counts[[row["GO_term"]]])
-      mat <- matrix(c(a,b-a,c,d-c),nrow = 2, byrow = TRUE)
-      fisher.test(mat, alternative = "greater")$p.value
+      go <- row[["GO_term"]]
+      c <- as.numeric(all_GO_gain_counts[go])
+      #mat <- matrix(c(a,b-a,c,d-c),nrow = 2, byrow = TRUE)
+      #fisher.test(mat, alternative = "greater")$p.value
+      safe_fisher(a,b,c,d)
     })
     GO_counts$padj_gain <- p.adjust(GO_counts$pval_gain, method = "bonferroni")
   }  
@@ -172,9 +249,11 @@ GO_setup <- function(DATA, NODE) {
     
     GO_counts$pval_loss <- apply(GO_counts, 1, function(row) {
       a <- as.numeric(row["lost"])
-      c <- as.numeric(all_GO_loss_counts[[row["GO_term"]]])
-      mat <- matrix(c(a,b-a,c,d-c),nrow = 2, byrow = TRUE)
-      fisher.test(mat, alternative = "greater")$p.value
+      go <- row[["GO_term"]]
+      c <- as.numeric(all_GO_loss_counts[go])
+      #mat <- matrix(c(a,b-a,c,d-c),nrow = 2, byrow = TRUE)
+      #fisher.test(mat, alternative = "greater")$p.value
+      safe_fisher(a,b,c,d)
     })
     GO_counts$padj_loss <- p.adjust(GO_counts$pval_loss, method = "bonferroni")
   }
@@ -186,98 +265,101 @@ print("GO setup initialized")
 
 ```
 
-```{r GO_figure_tsvs, eval=FALSE}
-
+```{r GO_figure_tsvs}
 process <- function(NODE, DIR) {
   dir.create(DIR)
   GO_df <- GO_setup(bp_GOs, NODE)
+  GO_df <- GO_df %>% mutate(padj_loss = if_else(padj_loss == 0, 1e-300, padj_loss),
+			    padj_gain = if_else(padj_gain == 0, 1e-300, padj_gain))
+  write.table(GO_df, file.path(DIR, "BP_GO_df.tsv"),
+                sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
   if(nrow(filter(GO_df, gained != 0)) == 0){
     print(paste("No BP gains in node: ", NODE))
   } else {
     gain <- GO_df %>% 
-      dplyr::select(c("GO_term", "padj_gain")) %>% 
-      #filter(padj_gain <= 0.01) %>% 
-      mutate(padj_gain = if_else(padj_gain == 0, 1e-300, padj_gain))
-    write_tsv(gain, file.path(DIR, "BP_gain.tsv"), col_names = FALSE)
+      dplyr::select(c("GO_term", "padj_gain", "gained"))
+    write.table(gain, file.path(DIR, "BP_gain.tsv"),
+                sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+	#write_tsv(gain, file.path(DIR, "BP_gain.tsv"), col_names = FALSE)
   }
   if(nrow(filter(GO_df, lost != 0)) == 0){
     print(paste("No BP losses in node: ", NODE))
   } else {
     loss <- GO_df %>% 
-      dplyr::select(c("GO_term", "padj_loss")) %>% 
-      #filter(padj_loss <= 0.01) %>% 
-      mutate(padj_loss = if_else(padj_loss == 0, 1e-300, padj_loss))
-    write_tsv(loss, file.path(DIR, "BP_loss.tsv"), col_names = FALSE)
+      dplyr::select(c("GO_term", "padj_loss", "lost"))  
+    #write_tsv(loss, file.path(DIR, "BP_loss.tsv"), col_names = FALSE)
+    write.table(loss, file.path(DIR, "BP_loss.tsv"),
+                sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
   }
   
   GO_df <- GO_setup(cc_GOs, NODE)
+  GO_df <- GO_df %>% mutate(padj_loss = if_else(padj_loss == 0, 1e-300, padj_loss),
+                            padj_gain = if_else(padj_gain == 0, 1e-300, padj_gain))
+  write.table(GO_df, file.path(DIR, "CC_GO_df.tsv"),
+                sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
   if(nrow(filter(GO_df, gained != 0)) == 0){
     print(paste("No CC gains in node: ", NODE))
   } else {
     gain <- GO_df %>% 
-      dplyr::select(c("GO_term", "padj_gain")) %>% 
+      dplyr::select(c("GO_term", "padj_gain", "gained"))  
       #filter(padj_gain <= 0.01) %>% 
-      mutate(padj_gain = if_else(padj_gain == 0, 1e-300, padj_gain))
-    write_tsv(gain, file.path(DIR, "CC_gain.tsv"), col_names = FALSE)
+      #mutate(padj_gain = if_else(padj_gain == 0, 1e-300, padj_gain))
+    write.table(gain, file.path(DIR, "CC_gain.tsv"),
+                sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+    #write_tsv(gain, file.path(DIR, "CC_gain.tsv"), col_names = FALSE)
   }
   if(nrow(filter(GO_df, lost != 0)) == 0){
     print(paste("No CC losses in node: ", NODE))
   } else {
     loss <- GO_df %>% 
-      dplyr::select(c("GO_term", "padj_loss")) %>% 
+      dplyr::select(c("GO_term", "padj_loss", "lost"))  
       #filter(padj_loss <= 0.01) %>% 
-      mutate(padj_loss = if_else(padj_loss == 0, 1e-300, padj_loss))
-    write_tsv(loss, file.path(DIR, "CC_loss.tsv"), col_names = FALSE)
+      #mutate(padj_loss = if_else(padj_loss == 0, 1e-300, padj_loss))
+    #write_tsv(loss, file.path(DIR, "CC_loss.tsv"), col_names = FALSE)
+    write.table(loss, file.path(DIR, "CC_loss.tsv"),
+                sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
   }
   
   GO_df <- GO_setup(mf_GOs, NODE)
+  GO_df <- GO_df %>% mutate(padj_loss = if_else(padj_loss == 0, 1e-300, padj_loss),
+                            padj_gain = if_else(padj_gain == 0, 1e-300, padj_gain))
+  write.table(GO_df, file.path(DIR, "MF_GO_df.tsv"),
+                sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
   if(nrow(filter(GO_df, gained != 0)) == 0){
     print(paste("No MF gains in node: ", NODE))
   } else {
     gain <- GO_df %>% 
-      dplyr::select(c("GO_term", "padj_gain")) %>% 
+      dplyr::select(c("GO_term", "padj_gain", "gained"))  
       #filter(padj_gain <= 0.01) %>% 
-      mutate(padj_gain = if_else(padj_gain == 0, 1e-300, padj_gain))
-    write_tsv(gain, file.path(DIR, "MF_gain.tsv"), col_names = FALSE)
+      #mutate(padj_gain = if_else(padj_gain == 0, 1e-300, padj_gain))
+    write.table(gain, file.path(DIR, "MF_gain.tsv"),
+                sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
+    #write_tsv(gain, file.path(DIR, "MF_gain.tsv"), col_names = FALSE)
   }
   if(nrow(filter(GO_df, lost != 0)) == 0){
     print(paste("No MF losses in node: ", NODE))
   } else {
     loss <- GO_df %>% 
-      dplyr::select(c("GO_term", "padj_loss")) %>% 
+      dplyr::select(c("GO_term", "padj_loss", "lost")) 
       #filter(padj_loss <= 0.01) %>% 
-      mutate(padj_loss = if_else(padj_loss == 0, 1e-300, padj_loss))
-    write_tsv(loss, file.path(DIR, "MF_loss.tsv"), col_names = FALSE)
+      #mutate(padj_loss = if_else(padj_loss == 0, 1e-300, padj_loss))
+    #write_tsv(loss, file.path(DIR, "MF_loss.tsv"), col_names = FALSE)
+    write.table(loss, file.path(DIR, "MF_loss.tsv"),
+                sep = "\t", row.names = FALSE, col.names = FALSE, quote = FALSE)
   }
 }
 print("process initialized")
 
-# Basal nodes 
-print("processing node 86")
-process(86, "./go_figure_tsvs/anth") # anthozoa 
-print("processing node 87")
-process(87, "./go_figure_tsvs/anth2") # anthozoa2 (hexacorals and ceriantheria)
-print("processing node 84")
-process(84, "./go_figure_tsvs/endomed") # endocnidozoa and medusozoa
-print("processing node 83")
-process(83, "./go_figure_tsvs/med") # medusazoa
-print("processing node 129")
-process(129, "./go_figure_tsvs/endo") # endocnidozoa
+dir="go_figure_tsvs50"
 
-# clade gains/losses
-print("processing node 130")
-process(130, "./go_figure_tsvs/myx") # myxozoa
-print("processing node 82")
-process(82, "./go_figure_tsvs/hyd") # hydrozoa
-print("processing node 132")
-process(132, "./go_figure_tsvs/scs") # ancestor of staurozoa, cubozoa, and scyphozoa (scs)
-print("processing node 117")
-process(117, "./go_figure_tsvs/oct") # octocorallia
-print("processing node 113")
-process(113, "./go_figure_tsvs/cer") # ceriantheria
-print("processing node 88")
-process(88, "./go_figure_tsvs/hex") #hexacorallia
+dir.create(dir)
 
+for (i in 1:nrow(focal_nodes)) {
+  print(paste("processing node:", focal_nodes$number[i]))
+  process(focal_nodes$number[i], file.path(dir,focal_nodes$name[i]))
+}
+
+print("gofigure setup done")
 
 ```
 
@@ -332,6 +414,7 @@ named_colors <- c(`Other / Unclassified` = "grey25",
 bp_cats <- read.table("/Users/oliviatatro/Downloads/surf/GO_classifications/BP_categorized.tsv", sep = "\t", header = TRUE)
 cc_cats <- read.table("/Users/oliviatatro/Downloads/surf/GO_classifications/CC_categorized.tsv", sep = "\t", header = TRUE)
 mf_cats <- read.table("/Users/oliviatatro/Downloads/surf/GO_classifications/MF_categorized.tsv", sep = "\t", header = TRUE)
+
 
 TITLE <- "test"
 transform <- function(num) {
@@ -431,26 +514,36 @@ library(readr)
 library(this.path)
 setwd(this.dir())
 library(cowplot)
+library(tidyr)
 
 focal_nodes <- data.frame(node_number = c(132, 133, 103, 104, 129, 130, 105, 116, 163, 159, 134, 137, 120, 108, 102), node_name = c("anth", "anth2", "endomed", "med", "endo", "myx", "hyd", "acr", "oct", "cer", "hex", "scler", "scyph", "siph", "cnid"))
 
 dir <- "/Users/oliviatatro/Downloads/surf/deepfri/go_figure_tsvs50"
 
-named_colors <- c(`Behavior and Movement` = "#dcbeff", 
-                  `Cell Communication and Signaling` = "#9A6324", 
-                  `Cell Cycle and Division` = "#ffe119",
-                  `Development` = "#006666",
-                  `Gene Expression and Regulation` = "#e6194B",
-                  `Immune Response` = "#911eb4",
-                  `Metabolism` = "#800000",
-                  `Response to Stress and Stimuli` = "#4363d8",
-                  `Nutrient Uptake and Exchange` = "#f58231",
-                  `Energy Production and Conversion` = "#3cb44b",
-                  `Homeostasis` = "#42d4f4",
-                  `Structural Organization and Cytoskeleton` = "#aaffc3",
-                  `Reproduction` = "#ffd8b1",
-                  `Nervous Systen Processes` = "hotpink2", 
-                  `Cellular Transport and Localization` = "#000075")
+named_colors <- c(`Behavior, Movement, & Environmental Response` = "firebrick4", 
+                  `Cell Communication & Signaling` = "#994C00", 
+                  `Cell Cycle & Division` = "#666600",
+                  `Cellular Transport & Localization` = "#006633",
+                  `Development & Morphogenesis` = "#006666",
+                  `Gene Expression & Regulation` = "#003366",
+                  `Immune & Defense Response` = "#4B0082",
+                  `Metabolism & Biosynthesis` = "violetred4",
+                  `Cytoplasm & Cytosol` = "red",
+                  `Cytoskeleton & Cell Junctions` = "chocolate1",
+                  `Endomembrane System & Vesicles` = "#C4FF3B",
+                  `Extracellular Region & Matrix` = "green3",
+                  `Membrane-Bound Organelles` = "turquoise3",
+                  `Nucleus & Chromatin` = "dodgerblue3",
+                  `Plasma Membrane & Cell Periphery` = "darkviolet",
+                  `Specialized Structure` = "#FF3BC4",
+                  `Binding (Small Molecule, Ion, Cofactor)` = "#FF9999",
+                  `Catalytic Activity` = "#FFB266",
+                  `Molecular Adaptors & Modulators` = "#FFFF99",
+                  `Motor & Mechanical Activity` = "darkolivegreen2",
+                  `Signal Transduction Activity` = "#99FFCC",
+                  `Structural Molecule Activity` = "#99CCFF",
+                  `Transcription Regulator Activity` = "#CC99FF",
+                  `Transporter Activity` = "#FF99CC")
 
 
 
@@ -462,7 +555,7 @@ named_colors <- c(`Behavior and Movement` = "#dcbeff",
 #TITLE <- "anth"
 
 
-cats <- read.csv("/Users/oliviatatro/Downloads/surf/GO_classifications/categories.csv")
+cats <- read.table("/Users/oliviatatro/Downloads/surf/GO_classifications/categories.tsv", sep = "\t", header = TRUE)
 
 gofigure_data <- data.frame(description = character(), x = numeric(), y = numeric(), pval = numeric(), category = character(), size = numeric(), node = character(), event = character(), members = character())
 
@@ -484,6 +577,8 @@ for (row in 1:nrow(focal_nodes)) {
   }
 }
 
+write.table(gofigure_data, file = "go_figure_data.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
+
 go_des <- gofigure_data %>% select(c(description, category, members)) %>% separate_rows(members, sep = ", ") %>% 
   mutate(members = gsub("'", "", members)) %>% 
   mutate(members = gsub("\\[", "", members)) %>% 
@@ -491,7 +586,6 @@ go_des <- gofigure_data %>% select(c(description, category, members)) %>% separa
   unique()
   
 write.table(go_des, file="go_term_descriptions.tsv", row.names = FALSE, quote = TRUE, sep = "\t")
-
 
 unique(sort(gofigure_data$category))
 
@@ -554,7 +648,1165 @@ print(fig)
 #dev.off()
 ```
 
-```{r go_cluster_enrichment}
+
+```{r GO_figure_data_summary_all_nodes}
+library(ggforce)
+library(dplyr)
+library(readr)
+library(this.path)
+setwd(this.dir())
+library(cowplot)
+library(tidyr)
+
+dir <- "/Users/oliviatatro/Downloads/surf/deepfri/go_figure_tsvs"
+
+named_colors <- c(`Behavior, Movement, & Environmental Response` = "firebrick4", 
+                  `Cell Communication & Signaling` = "#994C00", 
+                  `Cell Cycle & Division` = "#666600",
+                  `Cellular Transport & Localization` = "#006633",
+                  `Development & Morphogenesis` = "#006666",
+                  `Gene Expression & Regulation` = "#003366",
+                  `Immune & Defense Response` = "#4B0082",
+                  `Metabolism & Biosynthesis` = "violetred4",
+                  `Cytoplasm & Cytosol` = "red",
+                  `Cytoskeleton & Cell Junctions` = "chocolate1",
+                  `Endomembrane System & Vesicles` = "#C4FF3B",
+                  `Extracellular Region & Matrix` = "green3",
+                  `Membrane-Bound Organelles` = "turquoise3",
+                  `Nucleus & Chromatin` = "dodgerblue3",
+                  `Plasma Membrane & Cell Periphery` = "darkviolet",
+                  `Specialized Structure` = "#FF3BC4",
+                  `Binding (Small Molecule, Ion, Cofactor)` = "#FF9999",
+                  `Catalytic Activity` = "#FFB266",
+                  `Molecular Adaptors & Modulators` = "#FFFF99",
+                  `Motor & Mechanical Activity` = "darkolivegreen2",
+                  `Signal Transduction Activity` = "#99FFCC",
+                  `Structural Molecule Activity` = "#99CCFF",
+                  `Transcription Regulator Activity` = "#CC99FF",
+                  `Transporter Activity` = "#FF99CC")
+
+
+
+
+
+# PLOT FUNCTION ----------------------------------------------------------------
+#DOTS <- file.path(dir, paste0(focal_nodes$node_name[1], "_gain"), paste0("biological_process_output_", focal_nodes$node_name[1], "_gain.tsv"))
+#CATS <- "/Users/oliviatatro/Downloads/surf/eggnog/go_figure/BP_classified.csv" 
+#TITLE <- "anth"
+
+
+cats <- read.table("/Users/oliviatatro/Downloads/surf/GO_classifications/categories.tsv", sep = "\t", header = TRUE)
+
+gofigure_data <- data.frame(description = character(), x = numeric(), y = numeric(), pval = numeric(), category = character(), size = numeric(), node = character(), event = character(), members = character())
+
+ontologies <- c("biological_process_", "cellular_component_", "molecular_function_")
+names(ontologies) <- c("bp", "cc", "mf")
+
+for (node in 98:193) {
+  for (ont in names(ontologies)) {
+    for (event in c("gain", "loss")) {
+      filepath <- file.path(dir, node, event, paste0(ontologies[ont], "go_figure_tsvs_", node, "_", event, ".tsv"))
+      if (file.exists(filepath)) {
+        dots <- as.data.frame(read_tsv(filepath)) %>% 
+          merge(cats, by = "description") %>% 
+          mutate(node = node, event = event, ontology = ont) %>% 
+          dplyr::select(c(description, x, y, pval, user, category, node, event, ontology, members)) %>%
+          dplyr::rename(size = "user")
+        gofigure_data <- rbind(gofigure_data, dots)
+      }
+    }
+  }
+}
+
+# this is being written for go_figure_parse.py (/mnt/home/plachetzki/omt1027/surf/97_taxa/orthofinder_run/deepfri/go_figure/parse_output/go_figure_parse.py)
+write.table(gofigure_data, file = "go_figure_data.tsv", sep = "\t", quote = FALSE, row.names = FALSE)
+
+```
+
+
+```{r enrichment_barplots}
+library(dplyr)
+library(this.path)
+library(ggplot2)
+setwd(this.dir())
+library(ggtext)
+library(forcats)
+
+gl_counts <- read.table("function_gl.tsv", header = TRUE, sep = "\t")
+
+gl_counts <- gl_counts %>% filter(node >= 102 & node <= 172) # Filter to include nodes within cnidaria
+
+all_gains <- sum(gl_counts$gain)
+all_losses <- sum(gl_counts$loss)
+
+# find total gains and losses for each category and node
+gl_counts <- gl_counts %>% group_by(category) %>% 
+  mutate(all_cat_gains = sum(gain), all_cat_losses = sum(loss)) %>% ungroup() %>% 
+  group_by(node) %>% 
+  mutate(all_node_gains = sum(gain), all_node_losses = sum(loss)) %>% ungroup()
+
+# adding columns for the background values needed for the fisher exact test
+gl_counts <- gl_counts %>% 
+  mutate(non_cat_node_gains = all_node_gains - gain, # gains in the node but not category
+         non_cat_node_losses = all_node_losses - loss,  # losses in the node but not category
+         non_node_cat_gains = all_cat_gains - gain, # gains in category but not node
+         non_node_cat_losses = all_cat_losses - loss, # losses in category but not node 
+         non_cat_non_node_gains = all_gains - all_cat_gains - all_node_gains + gain, # gains not in category or node
+         non_cat_non_node_losses = all_losses - all_cat_losses - all_node_losses + loss) # losses not in category or node
+        
+
+# fisher exact to see if there are more gains at a certain category in each node
+# matrix:
+#     [,1]                  [,2]                     
+#[1,] "loss"                "non_cat_node_losses"    
+#[2,] "non_node_cat_losses" "non_cat_non_node_losses"
+# writing this in a for loop because mutate gave an FEXACT error due to it storing all the matrices at once
+gl_counts$pval_gain <- NA
+gl_counts$pval_loss <- NA
+gl_counts$fold_gain <- (gl_counts$gain / gl_counts$all_node_gains) / (gl_counts$all_cat_gains / all_gains)
+gl_counts$fold_loss <- (gl_counts$loss / gl_counts$all_node_losses) / (gl_counts$all_cat_losses / all_losses)
+for (row in 1:nrow(gl_counts)) {
+  a <- gl_counts$gain[row]
+  b <- gl_counts$non_cat_node_gains[row]
+  c <- gl_counts$non_node_cat_gains[row]
+  d <- gl_counts$non_cat_non_node_gains[row]
+  ft <- fisher.test(matrix(c(a,b,c,d), nrow = 2, byrow = TRUE), alternative = "greater")
+  gl_counts$pval_gain[row] <- ft$p.value
+  gl_counts$or_gain[row]   <- ft$estimate 
+  
+  a <- gl_counts$loss[row]
+  b <- gl_counts$non_cat_node_losses[row]
+  c <- gl_counts$non_node_cat_losses[row]
+  d <- gl_counts$non_cat_non_node_losses[row]
+  ft <- fisher.test(matrix(c(a,b,c,d), nrow = 2, byrow = TRUE), alternative = "greater")
+  gl_counts$pval_loss[row] <- ft$p.value
+  gl_counts$or_loss[row]   <- ft$estimate 
+}
+
+summary <- gl_counts %>% select(category, gain, loss) %>% 
+  group_by(category) %>% 
+  summarize(sum_gain = sum(gain),
+            sum_loss = sum(loss))
+
+write.table(summary, file = "go_category_summary.tsv", sep = "\t", row.names = FALSE)
+
+gl_counts <- gl_counts %>% filter(node %in% focal_nodes[1:16,]$node) # filter out non focal nodes because we are not using those tests 
+gl_counts <- gl_counts %>% mutate(padj_gain = p.adjust(pval_gain, method = "BH"),
+                                  padj_loss = p.adjust(pval_loss, method = "BH")) %>% 
+  select(category, node, gain, loss, padj_gain, padj_loss, or_gain, or_loss, fold_gain, fold_loss)
+
+
+gl_counts <- merge(gl_counts, focal_nodes, by = "node")
+
+gl_counts <- gl_counts %>% filter(name %in% c("anth", "anth2", "endomed", "med", "endo", "myx", "hyd", "acr", "oct", "cer", "hex", "scler", "scyph", "siph", "cnid", "act"))
+
+gl_counts$sig_gain <- ifelse(gl_counts$padj_gain < 0.05, gl_counts$gain, 0)
+gl_counts$sig_loss <- ifelse(gl_counts$padj_loss < 0.05, gl_counts$loss, 0)
+gl_counts$sig_or_gain <- ifelse(gl_counts$padj_gain < 0.05, gl_counts$or_gain, 0)
+gl_counts$sig_or_loss <- ifelse(gl_counts$padj_loss < 0.05, gl_counts$or_loss, 0)
+gl_counts$sig_fold_gain <- ifelse(gl_counts$padj_gain < 0.05, gl_counts$fold_gain, 0)
+gl_counts$sig_fold_loss <- ifelse(gl_counts$padj_loss < 0.05, gl_counts$fold_loss, 0)
+
+x_axis_order <- c("Endocnidozoa", "Myxozoa", "Endocnidozoa + Medusozoa", "Medusozoa", "Hydrozoa", "Siphonophora", "Acraspeda", "Scyphozoa", "Cnidaria", "Anthozoa", "Octocorallia", "Ceriantheria + Hexacorallia", "Hexacorallia", "Actinaria", "Ceriantheria","Scleractinia")
+gl_counts$full_name <- factor(gl_counts$full_name, levels = x_axis_order)
+
+write.table(gl_counts, file = "gl_counts.tsv", sep = "\t", col.names = TRUE, row.names = FALSE, quote = FALSE)
+#gl_counts$category <- gsub("Environmental Response", "Environmental Resp.", gl_counts$category)
+
+plot_barplot <- function(gl_counts, cat) {
+  min <- -1 * max(gl_counts$loss)
+  max <- max(gl_counts$gain)
+  barplot <- ggplot(filter(gl_counts, category == cat)) +
+    geom_bar(aes(x = full_name, y = gain), fill = "grey70", stat = "identity") +
+    geom_bar(aes(x = full_name, y = -loss), fill = "grey70", stat = "identity") +
+    geom_bar(aes(x = full_name, y = sig_gain, fill = name), stat = "identity") +
+    geom_bar(aes(x = full_name, y = -sig_loss, fill = name), stat = "identity") +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    scale_fill_manual(values = node_cols) +
+    ylab("Number of OrthoGroups") +
+    xlab(NULL) +
+    #scale_y_continuous(limits = c(min, max)) +
+    scale_x_discrete(
+      labels = function(x) {
+        paste0("<span style='color:", node_cols_full[x], "'>", x, "</span>") # chatgpt line to make the x axis text match the node colors
+      }
+    ) +
+    ggtitle(cat) +
+    theme_bw() +
+    theme(axis.text.x = element_markdown(angle = 45, hjust = 1, size = 14, face = "bold"), # need to use element_markdown after the custom colors line,
+          axis.text.y = element_text(size = 12),
+          axis.title.y = element_text(size = 14),
+          plot.title = element_text(size = 15.5, hjust = 0.5),
+          legend.position = "none") 
+  
+  print(barplot)
+  return(barplot)
+}
+
+plots <- list()
+for (cat in unique(gl_counts$category)) {
+  plots[[cat]] <- plot_barplot(gl_counts, cat)
+}
+
+for (plot_num in 1:24) {
+  if (!plot_num %in% c(23,18,24,1)) {
+    plots[[plot_num]] <- plots[[plot_num]] + theme(axis.text.x = element_blank())
+  }
+  if (!plot_num %in% c(2,8,14,21,22,23)) {
+    plots[[plot_num]] <- plots[[plot_num]] + ylab(NULL)
+  } else {
+    plots[[plot_num]] <- plots[[plot_num]] + theme(plot.margin = margin(5.5,4,5.5,30))
+  }
+}
+
+row1 <- cowplot::plot_grid(plotlist = plots[c(2,4,5,12)], nrow = 1, rel_widths = c(1.12,1,1,1))
+row2 <- cowplot::plot_grid(plotlist = plots[c(8,6,7,9)], nrow = 1, rel_widths = c(1.12,1,1,1))
+row3 <- cowplot::plot_grid(plotlist = plots[c(14,10,11,3)], nrow = 1, rel_widths = c(1.12,1,1,1))
+row4 <- cowplot::plot_grid(plotlist = plots[c(21,13,15,17)], nrow = 1, rel_widths = c(1.12,1,1,1))
+row5 <- cowplot::plot_grid(plotlist = plots[c(22,16,19,20)], nrow = 1, rel_widths = c(1.12,1,1,1))
+row6 <- cowplot::plot_grid(plotlist = plots[c(23,18,24,1)], nrow = 1, rel_widths = c(1.12,1,1,1))
+#row7 <- cowplot::plot_grid(plotlist = plots[19:21], nrow = 1, rel_widths = c(1.12,1,1))
+#row8 <- cowplot::plot_grid(plotlist = plots[22:24], nrow = 1, rel_widths = c(1.12,1,1))
+
+cowplot::plot_grid(row1, row2, row3, row4, row5, row6,
+                           nrow = 6, ncol = 1, rel_heights = c(1,1,1,1,1,1.6))
+
+dir.create("figures")
+#ggsave("figures/enrichment_barplots_6_25_26.png", width = 20, height = 22)
+
+
+
+
+### making Anthozoa plot for the URC slideshow
+gl_counts <- read.table("gl_counts.tsv", sep = "\t", header = TRUE)
+
+anth_gl <- gl_counts %>% filter(full_name == "Anthozoa") %>% 
+  mutate(category = fct_reorder(category, fold_gain))
+
+ggplot(anth_gl) +
+    geom_bar(aes(y = category, x = fold_gain), fill = "grey50", stat = "identity") +
+    #geom_bar(aes(y = category, x = -or_loss), fill = "grey50", stat = "identity") +
+    geom_bar(aes(y = category, x = sig_fold_gain), fill = "green2", stat = "identity") +
+    #geom_bar(aes(y = category, x = -sig_or_loss), fill = "dodgerblue2", stat = "identity") +
+    #geom_vline(xintercept = 0, linetype = "dashed") +
+    ylab(NULL) +
+    xlab("Fold enrichment") +
+    ggtitle("Functions of Anthozoan gained genes") +
+    theme_bw() +
+    theme(axis.text.x = element_markdown(size = 12, color = "white"), # need to use element_markdown after the custom colors line,
+          axis.text.y = element_text(size = 10, color = "white"),
+          axis.title.y = element_text(size = 14, color = "white"),
+          axis.title.x = element_text(size = 14, color = "white"),
+          plot.title = element_text(size = 18, hjust = 2, color = "white"),
+          legend.position = "none", 
+          panel.background = element_rect(fill = "black"),
+          panel.border = element_rect(color = "black", fill = NA),
+          plot.background  = element_rect(fill = "black"),
+          panel.grid.major = element_line(color = "grey25"),
+          panel.grid.minor = element_line(color = "grey15")) 
+
+ggsave("figures/anthozoa_gain_enrichment.png", width = 7, height = 5)
+
+```
+
+```{r fisher_cluster_analysis}
+
+library(dplyr)
+library(this.path)
+library(ggplot2)
+setwd(this.dir())
+library(ggtext)
+library(forcats)
+
+# grabbing this file from /mnt/home/plachetzki/omt1027/surf/97_taxa/orthofinder_run/deepfri/go_figure/parse_output/shiny/go_figure_parse.py
+gl_counts <- read.table("cluster_gl.tsv", header = TRUE, sep = "\t")
+
+gl_counts <- gl_counts %>% filter(node >= 102 & node <= 172) # Filter to include nodes within cnidaria
+
+all_gains <- sum(gl_counts$gain)
+all_losses <- sum(gl_counts$loss)
+
+# find total gains and losses for each category and node
+gl_counts <- gl_counts %>% group_by(category) %>% 
+  mutate(all_cat_gains = sum(gain), all_cat_losses = sum(loss)) %>% ungroup() %>% 
+  group_by(node) %>% 
+  mutate(all_node_gains = sum(gain), all_node_losses = sum(loss)) %>% ungroup()
+
+# adding columns for the background values needed for the fisher exact test
+gl_counts <- gl_counts %>% 
+  mutate(non_cat_node_gains = all_node_gains - gain, # gains in the node but not category
+         non_cat_node_losses = all_node_losses - loss,  # losses in the node but not category
+         non_node_cat_gains = all_cat_gains - gain, # gains in category but not node
+         non_node_cat_losses = all_cat_losses - loss, # losses in category but not node 
+         non_cat_non_node_gains = all_gains - all_cat_gains - all_node_gains + gain, # gains not in category or node
+         non_cat_non_node_losses = all_losses - all_cat_losses - all_node_losses + loss) # losses not in category or node
+        
+
+# fisher exact to see if there are more gains at a certain category in each node
+# matrix:
+#     [,1]                  [,2]                     
+#[1,] "loss"                "non_cat_node_losses"    
+#[2,] "non_node_cat_losses" "non_cat_non_node_losses"
+# writing this in a for loop because mutate gave an FEXACT error due to it storing all the matrices at once
+gl_counts$pval_gain <- NA
+gl_counts$pval_loss <- NA
+gl_counts$fold_gain <- (gl_counts$gain / gl_counts$all_node_gains) / (gl_counts$all_cat_gains / all_gains)
+gl_counts$fold_loss <- (gl_counts$loss / gl_counts$all_node_losses) / (gl_counts$all_cat_losses / all_losses)
+for (row in 1:nrow(gl_counts)) {
+  if ((row %% 1000) == 0 ){
+    print(row)
+  }
+  a <- gl_counts$gain[row]
+  b <- gl_counts$non_cat_node_gains[row]
+  c <- gl_counts$non_node_cat_gains[row]
+  d <- gl_counts$non_cat_non_node_gains[row]
+  ft <- fisher.test(matrix(c(a,b,c,d), nrow = 2, byrow = TRUE), alternative = "greater")
+  gl_counts$pval_gain[row] <- ft$p.value
+  gl_counts$or_gain[row]   <- ft$estimate 
+  
+  a <- gl_counts$loss[row]
+  b <- gl_counts$non_cat_node_losses[row]
+  c <- gl_counts$non_node_cat_losses[row]
+  d <- gl_counts$non_cat_non_node_losses[row]
+  ft <- fisher.test(matrix(c(a,b,c,d), nrow = 2, byrow = TRUE), alternative = "greater")
+  gl_counts$pval_loss[row] <- ft$p.value
+  gl_counts$or_loss[row]   <- ft$estimate 
+}
+gl_counts_fisher <- gl_counts
+
+gl_counts <- gl_counts %>% filter(node %in% focal_nodes[1:16,]$node) # filter out non focal nodes because we are not using those tests 
+gl_counts <- gl_counts %>% filter(gain > 0 | loss > 0) # remove these before we correct p values to not throw the testing correction off 
+
+cluster_categories <- read.table("/Users/oliviatatro/Downloads/surf/GO_classifications/categories.tsv", sep = "\t", header = TRUE)
+
+gl_counts <- rename(gl_counts, cluster = category)
+gl_counts <- merge(gl_counts, cluster_categories, by.x = "cluster", by.y = "description")
+
+gl_counts <- gl_counts %>% group_by(node, category) %>% 
+  mutate(padj_gain = p.adjust(pval_gain, method = "BH"),
+         padj_loss = p.adjust(pval_loss, method = "BH")) %>% 
+  select(cluster, category, node, gain, loss, pval_gain, pval_loss, padj_gain, padj_loss, or_gain, or_loss, fold_gain, fold_loss)
+
+
+gl_counts <- merge(gl_counts, focal_nodes, by = "node")
+
+gl_counts <- gl_counts %>% filter(name %in% c("anth", "anth2", "endomed", "med", "endo", "myx", "hyd", "acr", "oct", "cer", "hex", "scler", "scyph", "siph", "cnid", "act"))
+
+gl_counts$full_name <- factor(gl_counts$full_name, levels = x_axis_order)
+
+write.table(gl_counts, file = "cluster_gl_counts.tsv", sep = "\t", col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+
+```
+
+```{r enrichment_plots}
+
+
+# --------------------- GO categories ----------------------------
+
+df <- read.table(file = "gl_counts.tsv", sep = "\t", header = TRUE)
+summary <- read.table(file = "go_category_summary.tsv", sep = "\t", header = TRUE)
+summary <- summary %>% arrange(sum_gain + sum_loss)
+
+y_axis_order <- summary$category
+
+df$category <- factor(df$category, levels = y_axis_order)
+
+library(ggplot2)
+library(ggbreak)
+library(scales)
+
+df$gain_color <- ifelse(df$padj_gain < 0.05, "Gain (padj < 0.05)", "Gain (n.s.)")
+df$loss_color <- ifelse(df$padj_loss < 0.05, "Loss (padj < 0.05)", "Loss (n.s.)")
+
+
+break_values = list("Cnidaria" = c(100, 1500, 5000), "Medusozoa" = c(10, 150, 500), "Endocnidozoa" = c(100, 2500, 10000), "Anthozoa" = c(100, 750, 2000))
+
+
+colors_alpha <- c("Gain (padj < 0.05)" = "#2CA02C", 
+                  "Gain (n.s.)" = adjustcolor("#2CA02C", alpha.f = 0.4), 
+                  "Loss (padj < 0.05)" = "#218bc4", 
+                  "Loss (n.s.)" = adjustcolor("#218bc4", alpha.f = 0.4))
+
+plots <- list()
+#focal_node <- "Anthozoa"
+for (focal_node in focal_nodes$full_name[1:16]) {
+  plot <- 
+  ggplot(filter(df, full_name == focal_node), aes(y = category)) +
+    # add 2 points per category per node: gain and loss
+    geom_point(aes(x = fold_gain, size = gain, color = gain_color))+
+    geom_point(aes(x = fold_loss, size = loss, color = loss_color))+
+    # add verticle line for fold enrichment = 1
+    geom_vline(xintercept = 1, linetype = "dashed")+
+    # use the alphas vector to lighten insignificant dots
+    scale_color_manual(values = colors_alpha, name = NULL) +
+    theme_bw() +
+    # label axes, legend, and title
+    ylab(NULL)+
+    xlab("Fold Enrichment") +
+    labs(size = "Number of OGs") +
+    ggtitle(focal_node) +
+    # adjust size legend
+    scale_size(range = c(1, 6), breaks = break_values[[focal_node]]) + 
+    #scale_size(range = c(1, 6)) +
+    # remove color legend 
+    guides(size = guide_legend(override.aes = list(color = "black")),
+           color = guide_legend(override.aes = list(size = 3)))+
+    theme(axis.text.y = element_text(size = 12),
+          axis.text.x = element_text(size = 8),
+          plot.title = element_text(color = node_cols_full[focal_node], size = 16, face = "bold", margin = margin(b = -2)),
+          legend.title = element_text(size = 14),
+          legend.text  = element_text(size = 12, margin = margin(l = 1, unit = "pt")),
+          legend.margin = margin(1, 1, 1, 1),
+          legend.key.size = unit(0.3, "cm"),
+          panel.border = element_rect(color = node_cols_full[focal_node], fill = NA, size = 3),
+          plot.background = element_rect(fill = "white", color = NA), 
+          plot.margin = margin(b = "2"))
+  
+  if (!focal_node %in% c("Cnidaria", "Medusozoa")) { # c("Anthozoa", "Endocnidozoa", "Octocorallia", "Scyphozoa") for 16 panel figure
+    plot <- plot + theme(axis.text.y = element_blank())
+  }
+  if (focal_node == "Cnidaria") {
+    plot <- plot + theme(legend.position = c(0.73, 0.77))
+  }else {
+    plot <- plot + theme(legend.position = c(0.75, 0.87)) +
+      guides(color = "none")
+  }
+  
+  print(plot)
+  
+  plots[[focal_node]] <- plot
+}
+
+#cowplot::plot_grid(plotlist = plots, nrow = 4, ncol = 4, rel_widths = c(2.2,1,1,1))
+#ggsave(file = "../manuscript/figures/category_dotplots.png", width = 16, height = 20)
+
+
+#focal_dotplots <- cowplot::plot_grid(plotlist = c(plots$Cnidaria, plots$Anthozoa, plots$Medusozoa, plots$Endocnidozoa), nrow = 2, ncol = 2, rel_widths = c(2.1,1))
+#focal_dotplots
+#ggsave(file = "../manuscript/figures/making_GO_figure/dotplots.png", width = 10, height = 9)
+
+# combined dot plots
+gain <- ggplot(df, aes(y = category)) +
+    # add 2 points per category per node: gain and loss
+    geom_jitter(aes(x = fold_gain, size = gain, color = full_name, alpha = gain_color), width = 0, height = 0.1)+
+    # add verticle line for fold enrichment = 1
+    geom_vline(xintercept = 1, linetype = "dashed")+
+    # use the alphas vector to lighten insignificant dots
+    scale_color_manual(name = "Focal node", values = node_cols_full) +
+    scale_alpha_manual(values = alphas) +
+    scale_x_continuous(trans = "log10") +
+    scale_size_continuous(name = "Number of OGs", range = c(2, 8), breaks = c(100, 2000, 5000)) +
+    theme_bw() +
+    # label axes, legend, and title
+    ylab(NULL)+
+    xlab("Fold Enrichment") +
+    labs(size = "Number of OGs") +
+    guides(alpha = "none",
+           size = guide_legend(override.aes = list(color = "black")),
+           color = guide_legend(override.aes = list(size = 4))) +
+    theme(axis.text = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          legend.text = element_text(size = 12),
+          legend.title = element_text(size = 14),
+          legend.key.size = unit(0.6, "lines"),
+          legend.key.spacing.y = unit(0, "pt"))
+  
+ggsave(file = "../manuscript/figures/category_gain_dotplot.png", width = 16, height = 8)
+
+loss <- ggplot(df, aes(y = category)) +
+    # add 2 points per category per node: gain and loss
+    geom_jitter(aes(x = fold_loss, size = loss, color = full_name, alpha = loss_color), width = 0.0, height = 0.1)+
+    # add verticle line for fold enrichment = 1
+    geom_vline(xintercept = 1, linetype = "dashed")+
+    # use the alphas vector to lighten insignificant dots
+    scale_color_manual(name = "Focal node", values = node_cols_full) +
+    scale_alpha_manual(values = alphas) +
+    scale_x_continuous(trans = "log10") +
+    scale_size_continuous(name = "Number of OGs", range = c(2, 8), breaks = c(100, 4000, 10000)) +
+    theme_bw() +
+    # label axes, legend, and title
+    ylab(NULL)+
+    xlab("Fold Enrichment") +
+    labs(size = "Number of OGs") +
+    guides(alpha = "none",
+           size = guide_legend(override.aes = list(color = "black")),
+           color = guide_legend(override.aes = list(size = 4))) +
+    theme(axis.text = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          legend.text = element_text(size = 12),
+          legend.title = element_text(size = 14),
+          legend.key.size = unit(0.6, "lines"),
+          legend.key.spacing.y = unit(0, "pt"))
+  
+ggsave(file = "../manuscript/figures/category_loss_dotplot.png", width = 16, height = 8)
+
+
+summary <- read.table("go_category_summary.tsv", sep = "\t", header = TRUE)
+summary$category <- factor(summary$category, levels = y_axis_order)
+
+summary <- summary %>% mutate(gain_thousands = sum_gain / 1000,
+                              loss_thousands = sum_loss / 1000)
+
+gain_summary <- ggplot(summary, aes(x = gain_thousands, y = category)) +
+  geom_bar(stat = "identity", fill = "grey40", col = "black", linewidth = 0.3) +
+  xlab("Number of OGs (thousands)")+
+  ylab(NULL)+
+  ggtitle("Gain") +
+  theme_bw()+
+  theme(axis.text.x = element_text(size = 8),
+        axis.text.y = element_blank(),
+        plot.margin = margin(t = 2, r = 7, b = 5, l = 5), 
+        plot.title = element_text(size = 16, margin = margin(b = -2)))
+
+loss_summary <- ggplot(summary, aes(x = loss_thousands, y = category)) +
+  geom_bar(stat = "identity", fill = "grey80", col = "black", linewidth = 0.3) +
+  xlab("Number of OGs (thousands)")+
+  ylab(NULL)+
+  ggtitle("Loss")+
+  theme_bw()+
+  theme(axis.text.x = element_text(size = 8),
+        axis.text.y = element_blank(),
+        plot.margin = margin(t = 2, r = 7, b = 5, l = 5),
+        plot.title = element_text(size = 16, margin = margin(b = -2))) 
+
+gain_summary
+loss_summary
+
+#left = cowplot::plot_grid(gain, loss, ncol = 1, nrow = 2, labels = c("A", "C"), label_size = 24)
+#right = cowplot::plot_grid(gain_summary, loss_summary, ncol = 1, nrow = 2, labels = c("B", "D"), label_x = -0.03, label_size = 24)
+
+#plot <- cowplot::plot_grid(left, right, ncol = 2, rel_widths = c(4,1))
+#ggsave(file = "../manuscript/figures/GO_category_dotplots.png", width = 22, height = 14)
+
+
+focal_dotplots <- cowplot::plot_grid(plotlist = c(plots$Cnidaria, plots$Anthozoa, gain_summary, plots$Medusozoa, plots$Endocnidozoa, loss_summary), nrow = 2, ncol = 3, rel_widths = c(2.1,1,1))
+focal_dotplots
+ggsave(file = "../manuscript/figures/GO_dotplots_4_nodes.png", width = 14, height = 9)
+
+# ------------------- COGs --------------------------
+
+
+df <- read.table(file = "cog_enrichment.tsv", sep = "\t", header = TRUE)
+summary <- read.table(file = "cog_gain_loss_summary.tsv", sep = "\t", header = TRUE)
+summary <- summary %>% arrange(gain + loss)
+
+y_axis_order <- summary$definition
+
+df$definition <- factor(df$definition, levels = y_axis_order)
+
+library(ggplot2)
+library(ggbreak)
+library(scales)
+df$gain_color <- ifelse(df$padj_gain < 0.05, "Gain (padj < 0.05)", "Gain (n.s.)")
+df$loss_color <- ifelse(df$padj_loss < 0.05, "Loss (padj < 0.05)", "Loss (n.s.)")
+
+
+break_values = list("Cnidaria" = c(100, 1500, 5000), "Medusozoa" = c(10, 150, 500), "Endocnidozoa" = c(100, 2500, 10000), "Anthozoa" = c(100, 750, 2000))
+
+
+colors_alpha <- c("Gain (padj < 0.05)" = "#2CA02C", 
+                  "Gain (n.s.)" = adjustcolor("#2CA02C", alpha.f = 0.4), 
+                  "Loss (padj < 0.05)" = "#218bc4", 
+                  "Loss (n.s.)" = adjustcolor("#218bc4", alpha.f = 0.4))
+
+plots <- list()
+
+for (focal_node in focal_nodes$full_name[1:16]) {
+  plot <- 
+  ggplot(filter(df, node_name == focal_node), aes(y = definition)) +
+    # add 2 points per category per node: gain and loss
+    geom_point(aes(x = fold_gain, size = gain, color = gain_color))+
+    geom_point(aes(x = fold_loss, size = loss, color = loss_color))+
+    # add verticle line for fold enrichment = 1
+    geom_vline(xintercept = 1, linetype = "dashed")+
+    # use the alphas vector to lighten insignificant dots
+    scale_color_manual(values = colors_alpha, name = NULL) +
+    theme_bw() +
+    # label axes, legend, and title
+    ylab(NULL)+
+    xlab("Fold Enrichment") +
+    labs(size = "Number of OGs") +
+    ggtitle(focal_node) +
+    # adjust size legend
+    scale_size(range = c(1, 6), breaks = break_values[[focal_node]]) + 
+    #scale_size(range = c(1, 6)) +
+    # remove color legend 
+    guides(size = guide_legend(override.aes = list(color = "black")),
+           color = guide_legend(override.aes = list(size = 3)))+
+    theme(axis.text.y = element_text(size = 12),
+          axis.text.x = element_text(size = 8),
+          plot.title = element_text(color = node_cols_full[focal_node], size = 16, face = "bold", margin = margin(b = -2)),
+          legend.title = element_text(size = 14),
+          legend.text  = element_text(size = 12, margin = margin(l = 1, unit = "pt")),
+          legend.margin = margin(1, 1, 1, 1),
+          legend.key.size = unit(0.3, "cm"),
+          panel.border = element_rect(color = node_cols_full[focal_node], fill = NA, size = 3),
+          plot.background = element_rect(fill = "white", color = NA),
+          plot.margin = margin(b = 2))
+  
+  if (!focal_node %in% c("Cnidaria", "Medusozoa")) { # c("Anthozoa", "Endocnidozoa", "Octocorallia", "Scyphozoa") for 16 panel figure
+    plot <- plot + theme(axis.text.y = element_blank())
+  }
+  if (focal_node == "Cnidaria") {
+    plot <- plot + theme(legend.position = c(0.75, 0.795))
+  }else {
+    plot <- plot + theme(legend.position = c(0.77, 0.9)) +
+      guides(color = "none")
+  }
+  
+  print(plot)
+  
+  plots[[focal_node]] <- plot
+}
+
+#cowplot::plot_grid(plotlist = plots, nrow = 4, ncol = 4, rel_widths = c(2.2,1,1,1))
+#ggsave(file = "../manuscript/figures/cog_dotplots.png", width = 16, height = 20)
+
+gain <- ggplot(df, aes(y = definition)) +
+    # add 2 points per category per node: gain and loss
+    geom_jitter(aes(x = fold_gain, size = gain, color = node_name, alpha = gain_color), width = 0, height = 0.1)+
+    # add verticle line for fold enrichment = 1
+    geom_vline(xintercept = 1, linetype = "dashed")+
+    # use the alphas vector to lighten insignificant dots
+    scale_color_manual(name = "Focal node", values = node_cols_full) +
+    scale_alpha_manual(values = alphas) +
+    scale_x_continuous(trans = "log10") +
+    scale_size_continuous(name = "Number of OGs", range = c(2, 8), breaks = c(10, 600, 1800)) +
+    theme_bw() +
+    # label axes, legend, and title
+    ylab(NULL)+
+    xlab("Fold Enrichment") +
+    labs(size = "Number of OGs") +
+    guides(alpha = "none",
+           size = guide_legend(override.aes = list(color = "black")),
+           color = guide_legend(override.aes = list(size = 4))) +
+    theme(axis.text = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          legend.text = element_text(size = 12),
+          legend.title = element_text(size = 14),
+          legend.key.size = unit(0.6, "lines"),
+          legend.key.spacing.y = unit(0, "pt"))
+  
+loss <- ggplot(df, aes(y = definition)) +
+    # add 2 points per category per node: gain and loss
+    geom_jitter(aes(x = fold_loss, size = loss, color = node_name, alpha = loss_color), width = 0.0, height = 0.1)+
+    # add verticle line for fold enrichment = 1
+    geom_vline(xintercept = 1, linetype = "dashed")+
+    # use the alphas vector to lighten insignificant dots
+    scale_color_manual(name = "Focal node", values = node_cols_full) +
+    scale_alpha_manual(values = alphas) +
+    scale_x_continuous(trans = "log10") +
+    scale_size_continuous(name = "Number of OGs", range = c(2, 8), breaks = c(100, 2000, 5000)) +
+    theme_bw() +
+    # label axes, legend, and title
+    ylab(NULL)+
+    xlab("Fold Enrichment") +
+    labs(size = "Number of OGs") +
+    guides(alpha = "none",
+           size = guide_legend(override.aes = list(color = "black")),
+           color = guide_legend(override.aes = list(size = 4))) +
+    theme(axis.text = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          legend.text = element_text(size = 12),
+          legend.title = element_text(size = 14),
+          legend.key.size = unit(0.6, "lines"),
+          legend.key.spacing.y = unit(0, "pt"))
+
+
+summary$definition <- factor(summary$definition, levels = y_axis_order)
+
+summary <- summary %>% mutate(gain_thousands = gain / 1000,
+                              loss_thousands = loss / 1000)
+
+gain_summary <- ggplot(summary, aes(x = gain_thousands, y = definition)) +
+  geom_bar(stat = "identity", fill = "grey40", col = "black", linewidth = 0.3) +
+  xlab("Number of OGs (thousands)")+
+  ylab(NULL)+
+  ggtitle("Gain") +
+  theme_bw()+
+  theme(axis.text.x = element_text(size = 8),
+        axis.text.y = element_blank(),
+        plot.margin = margin(t = 2, r = 7, b = 5, l = 5), 
+        plot.title = element_text(size = 16, margin = margin(b = -2)))
+
+loss_summary <- ggplot(summary, aes(x = loss_thousands, y = definition)) +
+  geom_bar(stat = "identity", fill = "grey80", col = "black", linewidth = 0.3) +
+  xlab("Number of OGs (thousands)")+
+  ylab(NULL)+
+  ggtitle("Loss")+
+  theme_bw()+
+  theme(axis.text.x = element_text(size = 8),
+        axis.text.y = element_blank(),
+        plot.margin = margin(t = 2, r = 7, b = 5, l = 5),
+        plot.title = element_text(size = 16, margin = margin(b = -2))) 
+
+focal_dotplots <- cowplot::plot_grid(plotlist = c(plots$Cnidaria, plots$Anthozoa, gain_summary, plots$Medusozoa, plots$Endocnidozoa, loss_summary), nrow = 2, ncol = 3, rel_widths = c(2.375,1,1))
+focal_dotplots
+ggsave(file = "../manuscript/figures/COG_dotplots_4_nodes.png", width = 15, height = 9)
+
+```
+
+
+
+```{r additional_DeepFRI_plots}
+
+df <- read.table("cluster_gl_counts.tsv", sep = "\t", header = TRUE)
+
+
+library(ggplot2)
+library(stringr)
+library(tidytext)
+
+
+# ------------------- gains at the crown cnidarian -----------------------
+
+# these are the most notable gains at Cnidaria
+cnid_clusters = data.frame(
+  cluster = c("transcription regulator activity", "sequence-specific DNA binding", "RNA polymerase II transcription regulatory region sequence-specific DNA binding", 
+              "transcription cis-regulatory region binding", "extracellular region", "G protein-coupled receptor signaling pathway", 
+              "cell surface receptor signaling pathway", "regulation of cell communication", "intracellular signal transduction", 
+              "defense response to other organism", "regulation of immune system process", "adaptive immune response", 
+              "regulation of anatomical structure morphogenesis", "regulation of cell morphogenesis", "nervous system development", 
+              "nervous system process", "microtubule cytoskeleton", "cytoskeleton", 
+              "regulation of translation", "regulation of cell communication", "regulation of transcription by RNA polymerase II", 
+              "cell differentiation", "multicellular organism development", "system development"),
+                  cnid_function = c("Regulatory", "Regulatory", "Regulatory",
+                                    "Regulatory", "Signaling", "Signaling",
+                                    "Signaling", "Signaling", "Signaling",
+                                    "Immunity", "Immunity", "Immunity", 
+                                    "Development", "Development", "Nervous system", 
+                                    "Nervous system", "Cnidocyte discharge", "Cnidocyte discharge",
+                                    "Regulatory", "Regulatory", "Regulatory",
+                                    "Development", "Development", "Development"))
+
+# options: Immunity, Nervous System, Signaling, Regulation, Development
+
+cnidaria <- df %>% filter(full_name == "Cnidaria") 
+cnidaria <- merge(cnidaria, cnid_clusters, by = "cluster") %>% 
+  mutate(cluster = str_to_sentence(cluster))
+
+
+function_colors <- c("Development"              = "#C33F45",
+                     "Signaling"                   = "#A3D9D9",
+                     "Nervous system"                  = "#D89F58",
+                     "Cnidocyte discharge"                 = "#6D3871",
+                     "Regulatory"               = "#1A3567",
+                     "Immunity"               = "#1c8074")
+
+library(ggplot2)
+library(stringr)
+library(tidytext)
+# --- Plot ---
+cnid_plot <- ggplot(cnidaria, aes(x = fold_gain, y = reorder_within(cluster, fold_gain, node))) +
+  geom_point(aes(size = gain, color = cnid_function)) +
+  scale_color_manual(name = "Function", values = function_colors) +
+  scale_size_continuous(name = "Number of OGs", range = c(2, 8), breaks = c(50, 1000, 5000)) +
+  scale_y_reordered(labels = function(x) str_wrap(gsub("___.*$", "", x), width = 50)) +
+  #scale_x_continuous(limits = c(0, max(cnidaria$fold_gain))) +
+  labs(x = "Fold enrichment", y = NULL) +
+  theme_bw() +
+  theme(
+    axis.title.x = element_text(size = 12),
+    axis.text.y = element_text(size = 14, lineheight = 0.7),
+    strip.text.y = element_text(angle = 0, face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "right") +
+  theme(
+    legend.title = element_text(size = 14),
+    legend.text  = element_text(size = 12, margin = margin(l = 1, unit = "pt")),
+    legend.margin = margin(1, 1, 1, 1),
+    legend.key.size = unit(0.3, "cm"),
+  )+
+  guides(color = guide_legend(override.aes = list(size = 5)))
+
+cnid_plot
+ggsave("../manuscript/figures/crown_cnid_gains.png", width = 10, height = 8)
+
+
+
+
+
+# ---------------------- gains in anthozoan symbiosis --------------------------
+symbiosis_clusters <- data.frame(
+  cluster = c("cell-cell adhesion via plasma-membrane adhesion molecules", "phagocytosis, engulfment", "phagocytosis, recognition", 
+              "cell recognition", "complement activation", "ATPase-coupled ion transmembrane transporter activity", 
+              "protein transmembrane transport", "metal ion transport", "phosphorelay sensor kinase activity", 
+              "carbohydrate derivative binding", "vitamin binding", "endocytosis involved in viral entry into host cell", 
+              "membrane fusion involved in viral entry into host cell", "activation of immune response", "adhesion of symbiont to host cell", 
+              "regulation of immune system process", "defense response to other organism", "lipid transport", 
+              "plasma membrane", "cell periphery", "vitamin binding", 
+              "valine metabolic process", "aspartate family amino acid biosynthetic process", "lysine biosynthetic process via diaminopimelate",
+              "glutamine family amino acid metabolic process", "ATPase-coupled ion transmembrane transporter activity", "protein folding", 
+              "protein refolding", "immune system process", "cell periphery"), 
+  node = c("Anthozoa", "Anthozoa", "Anthozoa", 
+           "Anthozoa", "Anthozoa", "Anthozoa", 
+           "Anthozoa", "Anthozoa", "Anthozoa", 
+           "Anthozoa", "Anthozoa", "Anthozoa", 
+           "Anthozoa", "Anthozoa", "Cnidaria", 
+           "Cnidaria", "Cnidaria", "Ceriantheria + Hexacorallia", 
+           "Ceriantheria + Hexacorallia", "Ceriantheria + Hexacorallia", "Hexacorallia", 
+           "Hexacorallia", "Hexacorallia", "Hexacorallia", 
+           "Hexacorallia", "Hexacorallia", "Scleractinia",
+           "Scleractinia", "Ceriantheria + Hexacorallia", "Ceriantheria + Hexacorallia"), 
+  symbiotic_process = c("Symbiont recognition", "Symbiont uptake", "Symbiont recognition", 
+                        "Symbiont recognition", "Immune tolerance", "Nutrient exchange", 
+                        "Nutrient exchange", "Nutrient exchange", "Symbiosome maintenance", 
+                        "Nutrient exchange", "Nutrient exchange", "Symbiont uptake", 
+                        "Symbiont uptake", "Immune tolerance", "Symbiont recognition", 
+                        "Immune tolerance", "Immune tolerance", "Nutrient exchange", 
+                        "Membrane remodeling", "Membrane remodeling", "Nutrient exchange",
+                        "Nutrient exchange", "Nutrient exchange", "Nutrient exchange", 
+                        "Nutrient exchange", "Symbiosome maintenance", "Symbiosome maintenance",
+                        "Symbiosome maintenance", "Immune tolerance", "Symbiont uptake"))
+
+# add to results that the viral genes could have been coopted 
+# remove scleractinia from the results
+  # frame it as there were likely smaller changes and innovations that helped refine symbiosis but the main source of innovation was calicoblasts and skeleton building.
+
+symbiosis <- merge(df, symbiosis_clusters, by.x = c("cluster", "full_name"), by.y = c("cluster", "node"))
+
+node_levels <- c("Cnidaria", "Anthozoa", "Ceriantheria + Hexacorallia", "Hexacorallia", "Scleractinia")
+
+symbiosis <- symbiosis %>%
+  mutate(full_name = factor(full_name, levels = node_levels)) %>%
+  arrange(node, fold_gain) %>% 
+  mutate(cluster = str_to_sentence(cluster))
+
+symbiosis_colors <- c(
+  "Symbiont recognition"              = "#C33F45",
+  "Symbiont uptake"                   = "#A3D9D9",
+  "Immune tolerance"                  = "#D89F58",
+  "Nutrient exchange"                 = "#6D3871",
+  "Symbiosome maintenance" = "#1A3567",
+  "Membrane remodeling"               = "#1c8074"
+)
+
+symbiosis_plot <- ggplot(symbiosis, aes(x = fold_gain, y = reorder_within(cluster, fold_gain, node))) +
+  geom_point(aes(size = gain, color = symbiotic_process)) +
+  scale_size_continuous(name = "Number of OGs", range = c(2, 8), breaks = c(10, 150, 500)) +
+  scale_y_reordered(labels = function(x) str_wrap(gsub("___.*$", "", x), width = 50)) +
+  scale_color_manual(name = "Function", values = symbiosis_colors) +
+  labs(x = "Fold enrichment", y = NULL) +
+  theme_bw() +
+  facet_grid(full_name ~ ., scales = "free_y", space = "free_y") +
+  theme(
+    axis.title.x = element_text(size = 12),
+    axis.text.y = element_text(size = 14, lineheight = 0.7),
+    strip.text.y = element_text(angle = 0, face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "right") +
+  theme(
+    legend.title = element_text(size = 14),
+    legend.text  = element_text(size = 12, margin = margin(l = 1, unit = "pt")),
+    legend.margin = margin(1, 1, 1, 1),
+    legend.key.size = unit(0.5, "cm")
+  ) +
+  # hide the facets text and boxes
+  theme(strip.text.y = element_blank(), strip.background = element_blank()) +
+  guides(color = guide_legend(override.aes = list(size = 5)))
+
+symbiosis_plot
+
+ggsave("../manuscript/figures/symbiosis_gains.png", width = 10, height = 9.5)
+
+
+
+symbiosis_colors <- c(
+  "Symbiont recognition"              = "#ff598f",
+  "Symbiont uptake"                   = "#ff893b",
+  "Immune tolerance"                  = "#e0e300",
+  "Nutrient exchange"                 = "#01dd52",
+  "Symbiosome maintenance"            = "#01dddd",
+  "Membrane remodeling"               = "#8a75eb"
+)
+
+# symbiosis plot for cnidofest talk
+ggplot(symbiosis, aes(x = fold_gain, y = reorder_within(cluster, fold_gain, node))) +
+  geom_point(aes(size = gain, color = symbiotic_process)) +
+  scale_size_continuous(name = "Number of OGs", range = c(2, 10), breaks = c(10, 150, 500)) +
+  scale_y_reordered(labels = function(x) str_wrap(gsub("___.*$", "", x), width = 100)) +
+  scale_color_manual(name = "Function", values = symbiosis_colors) +
+  labs(x = "Fold enrichment", y = NULL) +
+  ggtitle("GO cluster gains support the evolution of symbiosis") +
+  theme_bw() +
+  facet_grid(full_name ~ ., scales = "free_y", space = "free_y") +
+  theme(
+    plot.title = element_text(color = "grey90", size = 24),
+    axis.title.x = element_text(size = 18, color = "grey90"),
+    axis.text = element_text(size = 18, lineheight = 0.7, color = "grey90"),
+    strip.text.y = element_text(angle = 0, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 24, color = "grey85"),
+    legend.text  = element_text(size = 20, color = "grey85", margin = margin(l = 1, unit = "pt")),
+    legend.margin = margin(1, 1, 1, 1),
+    legend.key.size = unit(0.5, "cm"),
+    legend.background = element_rect(fill = "black", color = NA),
+    legend.key = element_rect(fill = "black", color = NA),
+    panel.background = element_rect(fill = "black"),
+    panel.border = element_rect(color = "white", fill = NA, linewidth = 2),
+    plot.background  = element_rect(fill = "black"),
+    panel.grid.major = element_line(color = "grey50"),
+    panel.grid.minor = element_line(color = "grey40")
+  ) +
+  # hide the facets text and boxes
+  theme(strip.text.y = element_blank(), strip.background = element_blank()) +
+  guides(color = guide_legend(override.aes = list(size = 10)),
+         size = guide_legend(override.aes = list(color = "grey85"))) 
+
+ggsave("figures/cnidofest_cluster_symbiosis.png", width = 18, height = 11)
+
+
+
+
+
+
+
+# ------------------ gains in Medusae evolution -------------------------------
+med <- df %>% filter(full_name == "Medusozoa")
+
+med_clusters <- data.frame(
+  cluster = c("macromolecule localization", "establishment of protein localization", "signaling", 
+              "nuclear division", "vesicle-mediated transport", "inorganic ion transmembrane transport",
+              "secretion", "protein transport", "membrane fusion", 
+              "mitochondrial electron transport", "ubiquinol to cytochrome c", "lipid biosynthetic process",
+              "nervous system development", "nervous system process", "G protein-coupled receptor signaling pathway",
+              "cell surface receptor signaling pathway", "intracellular signal transduction", "regulation of cell communication",
+              "anatomical structure development", "regulation of developmental process", "anatomical structure development", 
+              "nervous system development", "inorganic cation transmembrane transport", "establishment of localization in cell", 
+              "monoatomic anion transmembrane transport", "protein transmembrane transport", "establishment of protein localization", 
+              "macromolecule localization", "vesicle-mediated transport", "membrane fusion",
+              "mitochondrial inner membrane", "signaling", "cell surface receptor signaling pathway", 
+              "nervous system process", "anatomical structure morphogenesis", "animal organ development", 
+              "proton motive force-driven plasma membrane ATP synthesis", "energy coupled proton transport down electrochemical gradient", "respiratory chain complex III", 
+              "endopeptidase complex", "proteasome complex"),
+  node = c("Medusozoa", "Medusozoa", "Medusozoa", 
+           "Medusozoa", "Medusozoa", "Medusozoa",
+           "Medusozoa", "Medusozoa", "Medusozoa", 
+           "Medusozoa", "Medusozoa", "Medusozoa", 
+           "Cnidaria", "Cnidaria", "Cnidaria",
+           "Cnidaria", "Cnidaria", "Cnidaria",
+           "Cnidaria", "Cnidaria", "Endocnidozoa + Medusozoa",
+           "Endocnidozoa + Medusozoa", "Hydrozoa", "Hydrozoa",
+           "Hydrozoa", "Hydrozoa", "Hydrozoa",
+           "Hydrozoa", "Hydrozoa", "Hydrozoa",
+           "Hydrozoa", "Acraspeda", "Acraspeda",
+           "Acraspeda", "Acraspeda", "Acraspeda",
+           "Scyphozoa", "Scyphozoa", "Scyphozoa",
+           "Scyphozoa", "Scyphozoa"), 
+  medusae_function = c("Localization", "Localization", "Signaling", 
+                       "Cell proliferation", "Vesicle trafficking and secretion", "Ion transport",
+                       "Vesicle trafficking and secretion", "Localization", "Vesicle trafficking and secretion",
+                       "Energetics", "Energetics", "Vesicle trafficking and secretion",
+                       "Nervous system development", "Nervous system development", "Signaling", 
+                       "Signaling", "Signaling", "Signaling", 
+                       "Development", "Development", "Development", 
+                       "Nervous system development", "Ion transport", "Localization", 
+                       "Ion transport", "Localization", "Localization",
+                       "Localization", "Vesicle trafficking and secretion", "Vesicle trafficking and secretion", 
+                       "Energetics", "Signaling", "Signaling", 
+                       "Nervous system development", "Development", "Development",
+                       "Energetics", "Energetics", "Energetics",
+                       "Strobilation", "Strobilation"))
+
+
+medusae <- merge(df, med_clusters, by.x = c("cluster", "full_name"), by.y = c("cluster", "node"))
+
+node_levels <- c("Cnidaria", "Endocnidozoa + Medusozoa", "Medusozoa", "Hydrozoa", "Acraspeda", "Scyphozoa")
+
+medusae <- medusae %>%
+  mutate(full_name = factor(full_name, levels = node_levels)) %>%
+  arrange(node, or_gain) %>% 
+  mutate(cluster = str_to_sentence(cluster))
+
+library(tidytext)
+
+medusae_colors <- c(
+  "Nervous system development"              = "#C33F45",
+  "Signaling"                   = "#A3D9D9",
+  "Development"                  = "#D89F58",
+  "Cell proliferation"                 = "#6D3871",
+  "Vesicle trafficking and secretion" = "#1A3567",
+  "Ion transport"               = "#1c8074",
+  "Localization"  = "#B0D19A",
+  "Energetics"  = "#E2B0A5")
+
+library(ggbreak)
+medusae_plot <- ggplot(medusae, aes(x = fold_gain, y = reorder_within(cluster, fold_gain, node))) +
+  geom_point(aes(size = gain, color = medusae_function)) +
+  scale_size_continuous(name = "Number of OGs", range = c(2, 8), breaks = c(10, 250, 750)) +
+  scale_y_reordered(labels = function(x) str_wrap(gsub("___.*$", "", x), width = 50)) +
+  #scale_x_continuous(limits = c(0, max(medusae$fold_gain))) +
+  scale_color_manual(name = "Function", values = medusae_colors) +
+  labs(x = "Fold enrichment", y = NULL) +
+  theme_bw() +
+  facet_grid(full_name ~ ., scales = "free_y", space = "free_y") +
+  theme(
+    axis.title.x = element_text(size = 12),
+    axis.text.y = element_text(size = 14, lineheight = 0.7),
+    strip.text.y = element_text(angle = 0, face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "right") +
+  theme(
+    legend.title = element_text(size = 14),
+    legend.text  = element_text(size = 12, margin = margin(l = 1, unit = "pt")),
+    legend.margin = margin(1, 1, 1, 1),
+    legend.key.size = unit(0.5, "cm")
+  ) +
+  # hide the facets text and boxes
+  theme(strip.text.y = element_blank(), strip.background = element_blank()) +
+  guides(color = guide_legend(override.aes = list(size = 5))) +
+  scale_x_break(c(2.75, 15), scales = 0.2) +
+  theme(axis.text.y.right = element_blank(), # the break adds extra labels for some reason. so, removing them here
+        axis.ticks.y.right = element_blank())
+
+medusae_plot
+
+ggsave("../manuscript/figures/medusae_gains.png", width = 10.5, height = 11.5)
+
+
+
+
+
+# ------------------ evolution of parasitism -------------------------------
+endo <- df %>% filter(full_name == "Myxozoa") %>%  filter(padj_gain < 0.05)
+
+parasite_clusters <- data.frame(
+  cluster = c("regulation of cell morphogenesis", "ribonucleoprotein complex biogenesis", "regulation of translation", 
+              "multicellular organismal process", "cellular component organization", "G protein-coupled receptor signaling pathway",
+              "intracellular signal transduction", "cell differentiation", "cellular response to chemical stimulus", 
+              "potassium ion transmembrane transport", "cell surface receptor signaling pathway", "regulation of transcription by RNA polymerase II",
+              "immune response-regulating cell surface receptor signaling pathway", "developmental process", "positive regulation of multicellular organismal process", 
+              "nervous system development", "nervous system process", "regulation of immune response", 
+              "primary active transmembrane transporter activity", "proton-transporting ATP synthase activity, rotational mechanism", "active transmembrane transporter activity", 
+              "microtubule cytoskeleton organization", "cellular component organization", "protein-RNA complex assembly", 
+              "multicellular organism development", "nervous system process", "anatomical structure development", 
+              "cell differentiation", "adaptive immune response", "nervous system development", 
+              "multicellular organismal process", "transmembrane transporter activity", "primary active transmembrane transporter activity",
+              "ATPase-coupled transmembrane transporter activity"),
+  parasitism_function = c("Development", "Translation", "Regulation",
+                       "Organization", "Organization", "Nervous system", 
+                       "Signaling", "Development", "Response", 
+                       "Nervous system", "Signaling", "Regulation", 
+                       "Immune system", "Development", "Regulation",
+                       "Nervous system", "Nervous system", "Immune system",
+                       "Transporters", "Energy production", "Transporters", 
+                       "Organization", "Organization", "Translation",
+                       "Organization", "Nervous system", "Development",
+                       "Development", "Immune system", "Nervous system",
+                       "Organization", "Transporters", "Transporters", 
+                       "Transporters"), 
+  node = c("Endocnidozoa", "Endocnidozoa", "Endocnidozoa",
+                 "Endocnidozoa", "Endocnidozoa", "Endocnidozoa",
+                 "Endocnidozoa", "Endocnidozoa", "Endocnidozoa",
+                 "Endocnidozoa", "Endocnidozoa", "Endocnidozoa", 
+                 "Endocnidozoa", "Endocnidozoa", "Endocnidozoa",
+                 "Endocnidozoa", "Endocnidozoa", "Endocnidozoa", 
+                 "Endocnidozoa", "Endocnidozoa", "Endocnidozoa",
+                 "Myxozoa", "Myxozoa", "Myxozoa", 
+                 "Myxozoa", "Myxozoa", "Myxozoa",
+                 "Myxozoa", "Myxozoa", "Myxozoa",
+                 "Myxozoa", "Myxozoa", "Myxozoa",
+                 "Myxozoa"),
+  node_event = c("Endocnidozoa Loss", "Endocnidozoa Loss", "Endocnidozoa Loss",
+                 "Endocnidozoa Loss", "Endocnidozoa Loss", "Endocnidozoa Loss",
+                 "Endocnidozoa Loss", "Endocnidozoa Loss", "Endocnidozoa Loss",
+                 "Endocnidozoa Loss", "Endocnidozoa Loss", "Endocnidozoa Loss", 
+                 "Endocnidozoa Loss", "Endocnidozoa Loss", "Endocnidozoa Loss", 
+                 "Endocnidozoa Loss", "Endocnidozoa Loss", "Endocnidozoa Loss", 
+                 "Endocnidozoa Gain", "Endocnidozoa Gain", "Endocnidozoa Gain",
+                 "Myxozoa Loss", "Myxozoa Loss", "Myxozoa Loss", 
+                 "Myxozoa Loss", "Myxozoa Loss", "Myxozoa Loss", 
+                 "Myxozoa Loss", "Myxozoa Loss", "Myxozoa Loss", 
+                 "Myxozoa Loss", "Myxozoa Gain", "Myxozoa Gain",
+                 "Myxozoa Gain"),
+  event = c("Loss", "Loss", "Loss",
+                 "Loss", "Loss", "Loss",
+                 "Loss", "Loss", "Loss",
+                 "Loss", "Loss", "Loss",
+                 "Loss", "Loss", "Loss",
+                 "Loss", "Loss", "Loss",
+                 "Gain", "Gain", "Gain",
+                 "Loss", "Loss", "Loss",
+                 "Loss", "Loss", "Loss",
+                 "Loss", "Loss", "Loss",
+                 "Loss", "Gain", "Gain",
+                 "Gain"))
+
+parasitism <- merge(df, parasite_clusters, by.x = c("cluster", "full_name"), by.y = c("cluster", "node"))
+parasitism$fold <- ifelse(parasitism$event == "Gain", parasitism$fold_gain, parasitism$fold_loss)
+
+node_levels <- c("Endocnidozoa Loss", "Endocnidozoa Gain", "Myxozoa Loss", "Myxozoa Gain")
+
+parasitism <- parasitism %>%
+  mutate(full_name = factor(node_event, levels = node_levels)) %>%
+  arrange(node, or_gain) %>% 
+  mutate(cluster = str_to_sentence(cluster))
+
+library(tidytext)
+
+parasitism_colors <- c(
+  "Nervous system"              = "#C33F45",
+  "Signaling"                   = "#A3D9D9",
+  "Development"                  = "#D89F58",
+  "Immune system"                 = "#6D3871",
+  "Organization" = "#1A3567",
+  "Transporters"               = "#1c8074",
+  "Response"  = "#B0D19A",
+  "Energy production"  = "#E2B0A5")
+
+library(ggbreak)
+parasitism_plot <- ggplot(parasitism, aes(x = fold, y = reorder_within(cluster, fold, node_event))) +
+  geom_point(aes(size = gain, color = parasitism_function)) +
+  geom_point(aes(size = loss, color = parasitism_function)) +
+  scale_size_continuous(name = "Number of OGs", range = c(2, 8), breaks = c(10, 500, 2000)) +
+  scale_y_reordered(labels = function(x) str_wrap(gsub("___.*$", "", x), width = 50)) +
+  #scale_x_continuous(limits = c(0, max(medusae$fold))) +
+  scale_color_manual(name = "Function", values = parasitism_colors) +
+  labs(x = "Fold enrichment", y = NULL) +
+  theme_bw() +
+  facet_grid(full_name ~ ., scales = "free_y", space = "free_y") +
+  theme(
+    axis.title.x = element_text(size = 12),
+    axis.text.y = element_text(size = 14, lineheight = 0.7),
+    strip.text.y = element_text(angle = 0, face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "right") +
+  theme(
+    legend.title = element_text(size = 14),
+    legend.text  = element_text(size = 12, margin = margin(l = 1, unit = "pt")),
+    legend.margin = margin(1, 1, 1, 1),
+    legend.key.size = unit(0.5, "cm")
+  ) +
+  # hide the facets text and boxes
+  theme(strip.text.y = element_blank(), strip.background = element_blank()) +
+  guides(color = guide_legend(override.aes = list(size = 5))) +
+  scale_x_break(c(1.6, 7), scales = 0.2) +
+  theme(axis.text.y.right = element_blank(), # the break adds extra labels for some reason. so, removing them here
+        axis.ticks.y.right = element_blank())
+
+parasitism_plot
+ggsave("../manuscript/figures/parasitism_evolution.png", width = 10, height = 10.5)
+
+
+# cnid_plot   symbiosis_plot
+# medusae_plot   parasitism_plot
+
+left <- cowplot::plot_grid(cnid_plot, medusae_plot, ncol = 1, rel_heights = c(nrow(cnidaria), nrow(medusae)))
+right <- cowplot::plot_grid(symbiosis_plot, parasitism_plot, ncol = 1, rel_heights = c(nrow(symbiosis), nrow(parasitism)))
+full <- cowplot::plot_grid(left, right, nrow = 1)
+full
+ggsave("../manuscript/figures/GO_clusters.png", width = 16, height = 20)
+```
+
+
+
+
+
+
+
+
+```{r go_cluster_enrichment, eval=FALSE}
 # group and sum the go data so that each row has a node, gain/loss, category, and the total count of annotations
 clusters <- gofigure_data %>% 
   group_by(node, event, category) %>% 
@@ -589,7 +1841,6 @@ for (i in 1:nrow(clusters)) {
   clusters$pval[i] <- p 
   
 }
-
 clusters$padj <- p.adjust(clusters$pval, method = "bonferroni")
 
 # create a named vector of the categories and the x value I am assigning 
